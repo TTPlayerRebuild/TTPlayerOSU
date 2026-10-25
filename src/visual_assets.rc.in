@@ -1,0 +1,5 @@
+// User-provided original TTPlayer logo, embedded without altering PNG bytes.
+// 101 is internal to the independently versioned visualization component.
+101 RCDATA "@TTP_OSU_LOGO_FILE@"
+// Original standard menu artwork; see assets/README.md for provenance.
+102 RCDATA "@TTP_OSU_ORIGINAL_LOGO_FILE@"

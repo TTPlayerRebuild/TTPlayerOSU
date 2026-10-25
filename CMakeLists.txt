@@ -8,10 +8,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(cmake/legacy_windows.cmake)
 include(cmake/size_release.cmake)
 include(cmake/version.cmake)
-add_library(ttp_osu SHARED src/plugin.cpp src/parser.cpp src/ttp_osu.def
-  "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc")
+set(TTP_OSU_LOGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/TTPlayer.png")
+set(TTP_OSU_ORIGINAL_LOGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/osu-menu-logo.png")
+configure_file(src/visual_assets.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/visual_assets.rc" @ONLY)
+add_library(ttp_osu SHARED src/plugin.cpp src/parser.cpp src/visual_scene.cpp
+  src/visual_api.cpp src/visual_renderer.cpp src/ttp_osu.def
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/visual_assets.rc")
 add_dependencies(ttp_osu ttp_osu_version)
 target_include_directories(ttp_osu PUBLIC include PRIVATE src)
+target_link_libraries(ttp_osu PRIVATE user32 gdi32 gdiplus ole32)
 target_compile_definitions(ttp_osu PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
   _WIN32_WINNT=0x0501 _CRT_SECURE_NO_WARNINGS)
 target_compile_options(ttp_osu PRIVATE /W4 /permissive- /EHsc /GR- /utf-8 /arch:SSE2)

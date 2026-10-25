@@ -3,3 +3,5 @@
 101 RCDATA "@TTP_OSU_LOGO_FILE@"
 // Original standard menu artwork; see assets/README.md for provenance.
 102 RCDATA "@TTP_OSU_ORIGINAL_LOGO_FILE@"
+// Original welcome_text@2x, byte-for-byte; decoded only for an enabled entrance.
+103 RCDATA "@TTP_OSU_WELCOME_FILE@"

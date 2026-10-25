@@ -10,6 +10,7 @@ include(cmake/size_release.cmake)
 include(cmake/version.cmake)
 set(TTP_OSU_LOGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/TTPlayer.png")
 set(TTP_OSU_ORIGINAL_LOGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/osu-menu-logo.png")
+set(TTP_OSU_WELCOME_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/osu-welcome-text.png")
 configure_file(src/visual_assets.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/visual_assets.rc" @ONLY)
 add_library(ttp_osu SHARED src/plugin.cpp src/parser.cpp src/visual_scene.cpp
   src/visual_api.cpp src/visual_renderer.cpp src/ttp_osu.def

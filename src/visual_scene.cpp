@@ -11,6 +11,13 @@ namespace ttp_osu::visual {
 namespace {
 constexpr double Pi = 3.14159265358979323846;
 constexpr double FrameMs = 1000.0 / 60;
+// Original MainMenu.Prepare/intro callback 0x06001B70/0x06001BA3.
+// The final 21 eligible 60 Hz ticks are elapsed-time based here, so a user's
+// selected rendering FPS does not prolong the entrance or block full-screen exit.
+constexpr double WelcomeRevealMs = 2438;
+constexpr double WelcomeLayerSwitchMs = WelcomeRevealMs + 20 * FrameMs;
+constexpr double WelcomeCompleteMs = WelcomeRevealMs + 21 * FrameMs;
+constexpr double DepartureMs = 100 / .6 * FrameMs;
 // osu! 0x060011B1 positions use H/480, but 0x060011B7 and
 // Sprite 0x06003F15 scale standard-resolution artwork by H/768.
 constexpr float TextureToLogical = 480.0f / 768.0f;
@@ -156,6 +163,34 @@ Scene::Scene() {
     particles_.reserve(600);
     waves_.reserve(8);
 }
+double Scene::TransitionAge() const noexcept {
+    return transition_now_ >= transition_start_ ?
+        static_cast<double>(transition_now_ - transition_start_) : 0;
+}
+void Scene::Transition(uint32_t phase, uint64_t now) {
+    if (phase > 2) throw Failure{E_INVALIDARG};
+    transition_now_ = std::max(transition_now_, now);
+    // Repeating an active phase is idempotent. Once welcome has completed,
+    // an explicit new entrance on the same instance starts it again.
+    if (phase && phase == transition_phase_ &&
+        (phase != 1 || TransitionAge() < WelcomeCompleteMs)) return;
+    // A departure can interrupt welcome. Freeze its current mask/ring layout
+    // and fade the remaining welcome text over the original 120ms; otherwise
+    // both text and the spectrum above the black mask would disappear at once.
+    exit_from_welcome_ = phase == 2 && transition_phase_ == 1 && TransitionAge() < WelcomeCompleteMs;
+    exit_welcome_age_ = exit_from_welcome_ ? TransitionAge() : 0;
+    transition_phase_ = phase;
+    transition_start_ = transition_now_ = now;
+}
+TtpOsuVisualTransitionState Scene::TransitionState(uint64_t now) noexcept {
+    transition_now_ = std::max(transition_now_, now);
+    const double duration = transition_phase_ == 1 ? WelcomeCompleteMs :
+        transition_phase_ == 2 ? DepartureMs : 0;
+    const bool complete = !transition_phase_ || TransitionAge() >= duration;
+    const uint32_t phase = transition_phase_ == 1 && complete ? 0 : transition_phase_;
+    return {sizeof(TtpOsuVisualTransitionState), phase, complete ? 1u : 0u,
+        static_cast<uint32_t>(std::ceil(duration))};
+}
 void Scene::SetLogo(uint32_t kind, uint32_t width, uint32_t height) {
     if (kind > 2 || (kind == 2 && (!width || !height))) throw Failure{E_INVALIDARG};
     logo_width_ = logo_height_ = LogoDiameter;
@@ -255,11 +290,14 @@ void Scene::Analyze(const TtpOsuVisualFrame& frame) {
             }
         }
     }
-    // Normalize a bin-centred full-scale sine to 1 before the menu's 1.6 gain.
+    // Normalize a bin-centred full-scale sine to 1 before the menu's gain.
+    // Original welcome pre-stage uses 2, then restores 1.6 at t=2438ms.
+    analyzed_intro_ = transition_phase_ == 1 && TransitionAge() < WelcomeRevealMs;
+    const float fft_gain = analyzed_intro_ ? 2.0f : 1.6f;
     // The DC component is single-sided, unlike the paired positive frequency bins.
     for (size_t i = 0; i < fft_.size(); ++i) {
         const float normalization = (i ? 2.0f : 1.0f) / 1023.5f;
-        fft_[i] = std::hypot(real[i], imaginary[i]) * normalization * 1.6f;
+        fft_[i] = std::hypot(real[i], imaginary[i]) * normalization * fft_gain;
     }
     amplitude_ = (left_peak_ + right_peak_) * .5f * Unit(frame.volume);
     ++fft_count_;
@@ -322,6 +360,7 @@ void Scene::Update(const TtpOsuVisualFrame& frame) {
     const bool stalled = initialized_ && (frame.now_ms < last_now_ || elapsed > 1000);
     if (changed || stopped || stalled) ResetTemporal();
     now_ = frame.now_ms;
+    transition_now_ = std::max(transition_now_, frame.now_ms);
     const double dt = changed || stopped || stalled ? 0.0 : static_cast<double>(elapsed);
     timeline_ = frame.timeline;
     last_now_ = frame.now_ms;
@@ -330,7 +369,8 @@ void Scene::Update(const TtpOsuVisualFrame& frame) {
     pointer_x_ = Unit(frame.pointer_x); pointer_y_ = Unit(frame.pointer_y);
     pointer_inside_ = frame.pointer_inside != 0;
     const bool playing = frame.playback == 2;
-    if (playing && frame.count && (!analyzed_ || frame.revision != revision_ ||
+    const bool intro_fft = transition_phase_ == 1 && TransitionAge() < WelcomeRevealMs;
+    if (playing && frame.count && (!analyzed_ || analyzed_intro_ != intro_fft || frame.revision != revision_ ||
         frame.pcm_cursor_offset != analyzed_cursor_offset_)) Analyze(frame);
     if (playing && frame.count) amplitude_ = (left_peak_ + right_peak_) * .5f * Unit(frame.volume);
     if (!playing || !frame.count) {
@@ -347,7 +387,9 @@ void Scene::Update(const TtpOsuVisualFrame& frame) {
     if (playing && new_beat) {
         strength_latched_ = strength_;
         if (waves_.size() == 8) waves_.erase(waves_.begin());
-        waves_.push_back({now_, 1.05f + hover_ - .05f * Ease(pulse_), .1f * strength_});
+        const float departure_scale = transition_phase_ == 2 ?
+            -.003f * static_cast<float>(std::min(TransitionAge(), DepartureMs) / FrameMs) : 0;
+        waves_.push_back({now_, 1.05f + hover_ + departure_scale - .05f * Ease(pulse_), .1f * strength_});
         if ((options_.flags & TTP_OSU_FLASH) && (next.kiai || (next.index > 0 && next.index % next.meter == 0))) {
             const auto target = [](float peak) { return std::min(1.0f, std::max(0.0f, (2 * peak * 32768 - 20000) / 45536) / 2); };
             if (!next.kiai || next.index % 2 == 0)
@@ -376,7 +418,9 @@ void Scene::Update(const TtpOsuVisualFrame& frame) {
         const float radius = 150 * (1.05f + hover_ - .05f * Ease(pulse_));
         const bool over = pointer_inside_ && pointer_y >= 0 && pointer_y <= 480 &&
             dx * dx + dy * dy < radius * radius;
-        hover_ = std::clamp(hover_ + (over ? .012f : -.012f), 0.0f, .1f);
+        // MainMenu's departure branch replaces hover accumulation completely.
+        if (transition_phase_ != 2)
+            hover_ = std::clamp(hover_ + (over ? .012f : -.012f), 0.0f, .1f);
     }
     double remaining = dt;
     while (remaining > 0) {
@@ -410,16 +454,34 @@ RenderFrame Scene::BuildFrame(uint32_t width, uint32_t height) const {
     surface_logical_height_ = height / scale;
     const float pointer_y = 240 + (pointer_y_ - .5f) * surface_logical_height_;
     const bool pointer_inside = pointer_inside_ && pointer_y >= 0 && pointer_y <= 480;
-    const float foreground_x = (options_.flags & TTP_OSU_PARALLAX) && pointer_inside ?
+    const double transition_age = TransitionAge();
+    const bool departing = transition_phase_ == 2;
+    const bool interrupted_welcome = departing && exit_from_welcome_;
+    const bool welcome = interrupted_welcome || (transition_phase_ == 1 && transition_age < WelcomeCompleteMs);
+    const double welcome_age = interrupted_welcome ? exit_welcome_age_ : transition_age;
+    const float departure_ticks = departing ? static_cast<float>(std::min(transition_age, DepartureMs) / FrameMs) : 0;
+    const float departure_scale = -.003f * departure_ticks;
+    const float departure_rotation = .001f * departure_ticks;
+    const float foreground_x = !welcome && (options_.flags & TTP_OSU_PARALLAX) && pointer_inside ?
         (pointer_x_ - .5f) * logical_width / 60 : 0;
-    const float foreground_y = (options_.flags & TTP_OSU_PARALLAX) && pointer_inside ?
+    const float foreground_y = !welcome && (options_.flags & TTP_OSU_PARALLAX) && pointer_inside ?
         (pointer_y - 240) / 60 : 0;
     const float cx = logical_width * .5f - foreground_x, cy = 240 - foreground_y;
-    const float logo_scale = 1.05f + hover_ - .05f * Ease(pulse_);
-    const float halo_scale = 1.05f + hover_ + .03f * Ease(pulse_);
+    const float logo_scale = 1.05f + hover_ + departure_scale - .05f * Ease(pulse_);
+    const float halo_scale = 1.05f + hover_ + departure_scale + .03f * Ease(pulse_);
     const auto add = [&](Texture texture, float x, float y, float w, float h, float rotation,
         uint32_t color, bool additive = false, bool flip = false) {
         result.quads.push_back({x * scale, top + y * scale, w * scale, h * scale, rotation, color, texture, additive, flip});
+    };
+    const auto add_logo = [&] {
+        if (!(options_.flags & TTP_OSU_LOGO)) return;
+        add(Texture::Logo, cx, cy, logo_width_*logo_scale, logo_height_*logo_scale, departure_rotation,
+            Color(RGB(255,255,255), 1 - .002f * departure_ticks));
+        // The original writes departure alpha to both sprites, then overwrites
+        // the halo with the normal pulse alpha later in MainMenu.Update.
+        const float halo_alpha = (beat_.kiai ? .1f : .4f) * (1-Ease(pulse_)) * strength_latched_;
+        add(Texture::Logo, cx, cy, logo_width_*halo_scale, logo_height_*halo_scale, departure_rotation,
+            Color(RGB(255,255,255), halo_alpha), beat_.kiai && playback_ == 2);
     };
     if (!image_.pixels.empty()) {
         const float cover = std::max(logical_width / image_.width, 480.0f / image_.height) *
@@ -450,10 +512,32 @@ RenderFrame Scene::BuildFrame(uint32_t width, uint32_t height) const {
         add(Texture::Star, x, y, 33 * size, 34 * size, particle.rotation_start +
             (particle.rotation_end - particle.rotation_start) * ease, Color(RGB(255,255,255), 1-ease), true);
     }
+    const bool logo_before_ring = welcome && welcome_age < WelcomeLayerSwitchMs;
+    if (logo_before_ring) add_logo();
+    if (welcome && welcome_age < WelcomeRevealMs + 240) {
+        const float mask_alpha = 1 - Unit(static_cast<float>((welcome_age - WelcomeRevealMs) / 240));
+        result.quads.push_back({width * .5f, height * .5f, static_cast<float>(width), static_cast<float>(height),
+            0, Color(RGB(0,0,0), mask_alpha), Texture::White});
+        const float welcome_alpha = welcome_age < WelcomeRevealMs ?
+            Unit(static_cast<float>(welcome_age / 1800)) :
+            1 - Unit(static_cast<float>((welcome_age - WelcomeRevealMs) / 120));
+        const float text_alpha = welcome_alpha * (interrupted_welcome ?
+            1 - Unit(static_cast<float>(transition_age / 120)) : 1);
+        const float text_scale = .9f + .0008f * static_cast<float>(std::min(welcome_age, WelcomeRevealMs) / FrameMs);
+        const float text_scale_y = Ease(Unit(static_cast<float>((welcome_age - 200) / 400)));
+        if (text_alpha > 0 && text_scale_y > 0)
+            add(Texture::Welcome, logical_width * .5f, 240, 375 * TextureToLogical * text_scale,
+                78 * TextureToLogical * text_scale * text_scale_y, 0, Color(RGB(255,255,255), text_alpha));
+    }
     if (options_.flags & TTP_OSU_SPECTRUM) {
-        const float radius = 150 * (1.05f + hover_ + .03f * (1-pulse_) * (1-pulse_));
+        const float radius = 150 * (1.05f + hover_ + departure_scale + .03f * (1-pulse_) * (1-pulse_)) +
+            (welcome && welcome_age < WelcomeRevealMs ? 8.0f : 0.0f);
+        // The original uses process-global startup time here. A DLL can enter
+        // repeatedly, so use its local welcome clock with the same slope.
+        const float ring_alpha = logo_before_ring ? .2f * static_cast<float>(welcome_age / 2558) :
+            (beat_.kiai ? 1.0f : .7f);
         for (size_t i = 0; i < bars_.size(); ++i) {
-            const float alpha = std::max(0.0f, .4f * (beat_.kiai ? 1.0f : .7f) * std::min(1.0f, (bars_[i]-.04f)/.08f));
+            const float alpha = std::max(0.0f, .4f * ring_alpha * std::min(1.0f, (bars_[i]-.04f)/.08f));
             if (alpha <= 0 || bars_[i] < .01f) continue;
             const float theta = static_cast<float>(2 * Pi * (.4 + static_cast<double>(i) / 1024 * 4));
             const float length = 115 * TextureToLogical * bars_[i];
@@ -461,11 +545,11 @@ RenderFrame Scene::BuildFrame(uint32_t width, uint32_t height) const {
                 length, 38 * .5f * TextureToLogical, theta, Color(options_.accent, alpha), true);
         }
     }
-    if (options_.flags & TTP_OSU_LOGO) {
-        add(Texture::Logo, cx, cy, logo_width_*logo_scale, logo_height_*logo_scale, 0, 0xffffffff);
-        const float halo_alpha = (beat_.kiai ? .1f : .4f) * (1-Ease(pulse_)) * strength_latched_;
-        add(Texture::Logo, cx, cy, logo_width_*halo_scale, logo_height_*halo_scale, 0,
-            Color(RGB(255,255,255), halo_alpha), beat_.kiai && playback_ == 2);
+    if (!logo_before_ring) add_logo();
+    if (departing) {
+        const float progress = Unit(static_cast<float>(transition_age / DepartureMs));
+        result.quads.push_back({width * .5f, height * .5f, static_cast<float>(width), static_cast<float>(height),
+            0, Color(RGB(0,0,0), progress), Texture::White});
     }
     if (top > 0) {
         // Identical CPU/GPU clipping of the effective viewport, including
@@ -478,8 +562,10 @@ RenderFrame Scene::BuildFrame(uint32_t width, uint32_t height) const {
     return result;
 }
 TtpOsuVisualStats Scene::Stats() const noexcept {
+    const float departure_scale = transition_phase_ == 2 ?
+        -.003f * static_cast<float>(std::min(TransitionAge(), DepartureMs) / FrameMs) : 0;
     return {sizeof(TtpOsuVisualStats), static_cast<uint32_t>(particles_.size()), bursts_, fft_count_,
         static_cast<uint32_t>(timing_.size()), beat_.kiai ? 1u : 0u, 0,
-        1.05f + hover_ - .05f * Ease(pulse_), FlashAlpha(left_flash_), FlashAlpha(right_flash_), revision_};
+        1.05f + hover_ + departure_scale - .05f * Ease(pulse_), FlashAlpha(left_flash_), FlashAlpha(right_flash_), revision_};
 }
 }

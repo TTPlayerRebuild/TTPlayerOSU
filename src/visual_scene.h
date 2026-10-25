@@ -6,7 +6,7 @@
 #include <vector>
 
 namespace ttp_osu::visual {
-enum class Texture { White, Logo, Spectrum, Star, Flash, Shockwave, Background };
+enum class Texture { White, Logo, Spectrum, Star, Flash, Shockwave, Background, Welcome };
 struct Image {
     uint32_t width{}, height{};
     std::vector<uint8_t> pixels; // tightly packed premultiplied BGRA
@@ -46,6 +46,8 @@ public:
     void SetTiming(std::vector<TimingPoint>);
     void SetImage(const TtpOsuVisualImage*);
     void SetLogo(uint32_t kind, uint32_t width = 0, uint32_t height = 0);
+    void Transition(uint32_t phase, uint64_t now_ms);
+    TtpOsuVisualTransitionState TransitionState(uint64_t now_ms) noexcept;
     void Update(const TtpOsuVisualFrame&);
     RenderFrame BuildFrame(uint32_t width, uint32_t height) const;
     const Image& Background() const noexcept { return image_; }
@@ -67,6 +69,7 @@ private:
         double duration{300};
     };
     void ResetTemporal();
+    double TransitionAge() const noexcept;
     void Analyze(const TtpOsuVisualFrame&);
     void RingStep(double milliseconds, bool playing);
     void Burst();
@@ -82,9 +85,13 @@ private:
     Flash left_flash_, right_flash_;
     BeatState beat_;
     uint64_t now_{}, last_now_{}, timeline_{}, revision_{}, last_burst_{};
+    uint64_t transition_start_{}, transition_now_{};
+    uint32_t transition_phase_{};
+    double exit_welcome_age_{};
+    bool exit_from_welcome_{};
     uint32_t random_{}, shift_{}, playback_{}, bursts_{}, fft_count_{};
     uint32_t analyzed_cursor_offset_{};
-    bool initialized_{}, analyzed_{}, beat_valid_{}, burst_valid_{};
+    bool initialized_{}, analyzed_{}, analyzed_intro_{}, beat_valid_{}, burst_valid_{};
     double ring_remainder_{}, envelope_remainder_{};
     float left_peak_{}, right_peak_{}, amplitude_{}, amplitude_smooth_{}, pulse_{}, hover_{};
     float strength_{0.6f}, strength_latched_{0.6f}, pointer_x_{0.5f}, pointer_y_{0.5f};

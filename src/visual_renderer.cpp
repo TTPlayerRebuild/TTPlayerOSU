@@ -19,7 +19,7 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 namespace ttp_osu::visual {
 namespace {
 constexpr float pi = 3.14159265358979323846f;
-constexpr size_t texture_count = static_cast<size_t>(Texture::Background) + 1;
+constexpr size_t texture_count = static_cast<size_t>(Texture::Welcome) + 1;
 constexpr uint64_t max_cpu_pixels = 16ull * 1024 * 1024;
 constexpr size_t maximum_quads = 8192;
 
@@ -242,6 +242,12 @@ struct Renderer::Impl {
         images[static_cast<size_t>(Texture::Shockwave)] = MakeShockwave();
         vertices.reserve(6 * 2048);
         assets_ready = true;
+    }
+    void TransitionAssets(const RenderFrame& frame) {
+        auto& welcome = images[static_cast<size_t>(Texture::Welcome)];
+        if (welcome.pixels.empty() && std::any_of(frame.quads.begin(), frame.quads.end(),
+            [](const Quad& quad) { return quad.texture == Texture::Welcome && ValidQuad(quad); }))
+            welcome = MakeLogo(103);
     }
     const Image& GetImage(Texture texture, const Image& background) const {
         return texture == Texture::Background ? background : images[static_cast<size_t>(texture)];
@@ -525,6 +531,7 @@ HRESULT Renderer::Paint(HDC dc, const RECT& rect, const RenderFrame& frame, cons
         target_width <= 0 || target_height <= 0 || target_width > INT_MAX || target_height > INT_MAX)
         return E_INVALIDARG;
     impl_->Assets();
+    impl_->TransitionAssets(frame);
     const HRESULT result = impl_->Dib(frame.width, frame.height);
     if (FAILED(result)) return result;
     // GDI batches references to source DIBs. Finish prior copies before writing
@@ -559,6 +566,7 @@ HRESULT Renderer::Present(HWND window, const RenderFrame& frame, const Image& ba
         frame.height > 16384 || frame.quads.size() > maximum_quads) return E_INVALIDARG;
     if (IsIconic(window)) return S_FALSE;
     impl_->Assets();
+    impl_->TransitionAssets(frame);
     const HRESULT ready = impl_->Device(window, frame.width, frame.height);
     if (FAILED(ready)) return ready;
     const HRESULT result = impl_->RenderGpu(frame, background);

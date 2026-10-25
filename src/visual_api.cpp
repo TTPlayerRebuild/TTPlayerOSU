@@ -195,18 +195,36 @@ HRESULT WINAPI SetLogo(void* opaque, uint32_t kind, const TtpOsuVisualImage* ima
         return S_OK;
     });
 }
+HRESULT WINAPI Transition(void* opaque, uint32_t phase, uint64_t now) noexcept {
+    return Boundary([&]() -> HRESULT {
+        auto& instance = Get(opaque);
+        std::lock_guard lock(instance.mutex);
+        instance.scene.Transition(phase, now);
+        return S_OK;
+    });
+}
+HRESULT WINAPI TransitionState(void* opaque, uint64_t now, TtpOsuVisualTransitionState* out) noexcept {
+    return Boundary([&]() -> HRESULT {
+        auto& instance = Get(opaque);
+        if (!out || out->size < sizeof(*out)) return E_INVALIDARG;
+        std::lock_guard lock(instance.mutex);
+        *out = instance.scene.TransitionState(now);
+        return S_OK;
+    });
+}
 }
 }
 
 extern "C" HRESULT WINAPI ttp_osu_query_visual(uint32_t version, TtpOsuVisualApi* out) noexcept {
     if (!out) return E_POINTER;
-    if (version != 1 && version != TTP_OSU_VISUAL_ABI) return E_NOINTERFACE;
-    const uint32_t bytes = version == 1 ? TTP_OSU_VISUAL_ABI1_SIZE : sizeof(*out);
+    if (version < 1 || version > TTP_OSU_VISUAL_ABI) return E_NOINTERFACE;
+    const uint32_t bytes = version == 1 ? TTP_OSU_VISUAL_ABI1_SIZE :
+        version == 2 ? TTP_OSU_VISUAL_ABI2_SIZE : sizeof(*out);
     if (out->size < bytes) return E_INVALIDARG;
     using namespace ttp_osu::visual;
     const TtpOsuVisualApi api{bytes, version, Create, Destroy, Configure, Timing, ArchiveTiming,
-        SetImage, Update, Paint, Present, Detach, Stats, SetLogo};
-    // ABI 1 callers own a shorter table: never touch the appended function slot.
+        SetImage, Update, Paint, Present, Detach, Stats, SetLogo, Transition, TransitionState};
+    // Old callers own shorter tables: never touch an appended function slot.
     std::memcpy(out, &api, bytes);
     return S_OK;
 }

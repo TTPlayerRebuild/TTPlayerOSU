@@ -1,6 +1,7 @@
 #include "visual_renderer.h"
 #include "visual_scene.h"
 #include "parser.h"
+#include "visual_torus_metrics.h"
 #include <d3d9.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -19,7 +20,7 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 namespace ttp_osu::visual {
 namespace {
 constexpr float pi = 3.14159265358979323846f;
-constexpr size_t texture_count = static_cast<size_t>(Texture::Welcome) + 1;
+constexpr size_t texture_count = static_cast<size_t>(Texture::Count);
 constexpr uint64_t max_cpu_pixels = 16ull * 1024 * 1024;
 constexpr size_t maximum_quads = 8192;
 
@@ -160,6 +161,86 @@ Image MakeShockwave() {
     }
     return image;
 }
+Image MakeLazerFlash() {
+    Image image=MakeImage(128,2);
+    for(uint32_t y=0;y<2;++y) for(uint32_t x=0;x<128;++x)
+        Pixel(image,x,y,Premultiplied(255,255,255,static_cast<float>(x)/127));
+    return image;
+}
+Image MakeCircle() {
+    Image image=MakeImage(512,512);
+    for(uint32_t y=0;y<512;++y) for(uint32_t x=0;x<512;++x)
+        Pixel(image,x,y,Premultiplied(255,255,255,
+            std::clamp(256-std::hypot(x+.5f-256,y+.5f-256),0.f,1.f)));
+    return image;
+}
+Image MakeTriangle(bool outline) {
+    Image image=MakeImage(128,128);
+    for(uint32_t y=0;y<128;++y) for(uint32_t x=0;x<128;++x) {
+        const float px=.5f-std::abs((x+.5f)/128-.5f),py=(y+.5f)/128;
+        if(py<1-2*px) continue;
+        const float distance=std::min(1-py,std::abs(.4472f*(py-1)+.8944f*px));
+        const float alpha=std::clamp(distance*128,0.f,1.f)*
+            (outline?std::clamp((.04f-distance)*128,0.f,1.f):1.f);
+        Pixel(image,x,y,Premultiplied(255,255,255,alpha));
+    }
+    return image;
+}
+Image MakeLazerGradient() {
+    constexpr uint32_t side=512;
+    Image image=MakeImage(side,side);
+    for(uint32_t y=0;y<side;++y) for(uint32_t x=0;x<side;++x) {
+        const float t=(y+.5f)/side;
+        const float a=std::clamp((side*.5f-std::hypot(x+.5f-side*.5f,y+.5f-side*.5f)),0.f,1.f);
+        Pixel(image,x,y,Premultiplied(255+(204-255)*t,102+(82-102)*t,171+(137-171)*t,a));
+    }
+    return image;
+}
+void MakeLazerFill(Image& image,const Image& gradient,const RenderFrame& frame) {
+    constexpr uint32_t side=512;
+    // The circle mask and gradient never change. Vector assignment reuses its
+    // allocation; only the moving outlines need rasterizing on each frame.
+    image=gradient;
+    image.revision=frame.lazer_fill_revision;
+    constexpr float relativeWidth=300.f/(512*.94f),relativeHeight=relativeWidth*.866f;
+    for(const auto& triangle:frame.lazer_triangles) {
+        const float left=triangle.x-relativeWidth*.5f,top=triangle.y;
+        const int x0=std::clamp(static_cast<int>(std::floor(left*side)),0,int(side));
+        const int y0=std::clamp(static_cast<int>(std::floor(top*side)),0,int(side));
+        const int x1=std::clamp(static_cast<int>(std::ceil((left+relativeWidth)*side)),0,int(side));
+        const int y1=std::clamp(static_cast<int>(std::ceil((top+relativeHeight)*side)),0,int(side));
+        const float texel=1.5f/(relativeHeight*side);
+        const float band=(.009f+texel)*relativeWidth*side/.8944f;
+        for(int y=y0;y<y1;++y) {
+          const float row=((y+.5f)/side-top)/relativeHeight;
+          const float left_edge=(left+relativeWidth*(.5f-row*.5f))*side-.5f;
+          const float right_edge=(left+relativeWidth*(.5f+row*.5f))*side-.5f;
+          const auto draw_span=[&](int begin,int end) {
+           for(int x=std::max(x0,begin);x<std::min(x1,end);++x) {
+            const float px=.5f-std::abs(((x+.5f)/side-left)/relativeWidth-.5f);
+            const float py=((y+.5f)/side-top)/relativeHeight;
+            if(py<1-2*px) continue;
+            const float distance=std::min(1-py,std::abs(.4472f*(py-1)+.8944f*px));
+            const auto smooth=[](float a){a=std::clamp(a,0.f,1.f);return a*a*(3-2*a);};
+            const float alpha=distance<texel?smooth(distance/texel):smooth(1-(distance-.009f)/texel);
+            if(alpha<=0) continue;
+            auto* dst=image.pixels.data()+(size_t(y)*side+x)*4;
+            const float circle=dst[3]/255.f,t=(y+.5f)/side;
+            const float rgb[]{171+(111-171)*t,102+(52-102)*t,255+(182-255)*t};
+            for(size_t c=0;c<3;++c) dst[c]=Byte(dst[c]*(1-alpha)+rgb[c]*circle*alpha);
+           }
+          };
+          // Only three thin edge strips have nonzero alpha. Retain the exact
+          // pixel equations and a conservative 2px bound at each strip, rather
+          // than scanning every transparent interior pixel of 13 triangles.
+          if(1-row<.009f+texel || right_edge-left_edge<2*band+6) draw_span(x0,x1);
+          else {
+              draw_span(static_cast<int>(std::floor(left_edge))-2,static_cast<int>(std::ceil(left_edge+band))+3);
+              draw_span(static_cast<int>(std::floor(right_edge-band))-2,static_cast<int>(std::ceil(right_edge))+3);
+          }
+        }
+    }
+}
 uint32_t TintPremultiplied(uint32_t argb) {
     const uint32_t a = argb >> 24;
     return (a << 24) | ((((argb >> 16) & 255) * a / 255) << 16) |
@@ -169,7 +250,9 @@ bool ValidQuad(const Quad& q) {
     return std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.width) &&
         std::isfinite(q.height) && std::isfinite(q.rotation) && q.width > 0 && q.height > 0 &&
         std::abs(q.x) <= 1000000 && std::abs(q.y) <= 1000000 && q.width <= 1000000 &&
-        q.height <= 1000000 && static_cast<size_t>(q.texture) < texture_count && (q.color >> 24);
+        q.height <= 1000000 && static_cast<size_t>(q.texture) < texture_count && (q.color >> 24) &&
+        std::isfinite(q.u0) && std::isfinite(q.v0) && std::isfinite(q.u1) && std::isfinite(q.v1) &&
+        q.u0>=0 && q.v0>=0 && q.u1<=1 && q.v1<=1 && q.u1>q.u0 && q.v1>q.v0;
 }
 std::array<float, 4> Sample(const Image& image, float u, float v) {
     const float fx = std::clamp(u * float(image.width) - 0.5f, 0.f, float(image.width - 1));
@@ -210,6 +293,13 @@ struct Renderer::Impl {
     std::array<GpuTexture, texture_count> textures;
     struct Vertex { float x, y, z, rhw; DWORD color; float u, v; };
     std::vector<Vertex> vertices;
+    Image lazer_gradient;
+    struct IntroAtlas {
+        Image highlight, background;
+        std::array<std::vector<uint32_t>,256> events;
+        int threshold{};
+    };
+    std::array<IntroAtlas,2> intro_atlases;
     ~Impl() {
         Detach();
         if (memory_dc && previous_bitmap) SelectObject(memory_dc, previous_bitmap);
@@ -248,6 +338,67 @@ struct Renderer::Impl {
         if (welcome.pixels.empty() && std::any_of(frame.quads.begin(), frame.quads.end(),
             [](const Quad& quad) { return quad.texture == Texture::Welcome && ValidQuad(quad); }))
             welcome = MakeLogo(103);
+        const auto used=[&](Texture texture){return std::any_of(frame.quads.begin(),frame.quads.end(),
+            [&](const Quad& q){return q.texture==texture && ValidQuad(q);});};
+        const auto load=[&](Texture texture,uint32_t resource) {
+            auto& img=images[static_cast<size_t>(texture)];
+            if(img.pixels.empty() && used(texture)) img=MakeLogo(resource);
+        };
+        load(Texture::LazerLogo,104);load(Texture::LazerStar,105);load(Texture::LazerFont,108);
+        load(Texture::RulesetOsu,109);load(Texture::RulesetTaiko,110);
+        load(Texture::RulesetCatch,111);load(Texture::RulesetMania,112);
+        auto& flash=images[static_cast<size_t>(Texture::LazerFlash)];
+        if(flash.pixels.empty() && used(Texture::LazerFlash)) flash=MakeLazerFlash();
+        auto& triangle=images[static_cast<size_t>(Texture::Triangle)];
+        if(triangle.pixels.empty() && used(Texture::Triangle)) triangle=MakeTriangle(false);
+        auto& outline=images[static_cast<size_t>(Texture::OutlineTriangle)];
+        if(outline.pixels.empty() && used(Texture::OutlineTriangle)) outline=MakeTriangle(true);
+        auto& circle=images[static_cast<size_t>(Texture::LazerCircle)];
+        if(circle.pixels.empty() && used(Texture::LazerCircle)) circle=MakeCircle();
+        auto& fill=images[static_cast<size_t>(Texture::LazerFill)];
+        if(used(Texture::LazerFill) && (fill.pixels.empty() || fill.revision!=frame.lazer_fill_revision)) {
+            if(lazer_gradient.pixels.empty())lazer_gradient=MakeLazerGradient();
+            MakeLazerFill(fill,lazer_gradient,frame);
+        }
+        if(used(Texture::LazerIntro)) RevealIntro(Texture::LazerIntro,0,106,107,frame.lazer_intro_progress);
+        if(used(Texture::LazerTTPlayerIntro)) RevealIntro(Texture::LazerTTPlayerIntro,1,113,114,frame.lazer_intro_progress);
+    }
+    void RevealIntro(Texture slot,size_t atlas_index,uint32_t highlight_id,uint32_t background_id,float progress) {
+        auto& atlas=intro_atlases[atlas_index];
+        auto& intro=images[static_cast<size_t>(slot)];
+        if(atlas.highlight.pixels.empty()) {
+            IntroAtlas loaded;
+            loaded.highlight=MakeLogo(highlight_id);loaded.background=MakeLogo(background_id);
+            if(!ValidImage(loaded.highlight) || !ValidImage(loaded.background) ||
+                loaded.highlight.width!=loaded.background.width || loaded.highlight.height!=loaded.background.height)
+                throw Failure{E_INVALIDARG};
+            // Only contour pixels can change. Bucket their strict R thresholds
+            // once instead of scanning/allocating two full PNGs every frame.
+            for(size_t i=0;i<loaded.highlight.pixels.size();i+=4) {
+                for(const auto* image:{&loaded.highlight,&loaded.background}) {
+                    const auto threshold=image->pixels[i+2];
+                    if(image->pixels[i+1] && threshold<255)
+                        loaded.events[threshold+1].push_back(static_cast<uint32_t>(i));
+                }
+            }
+            intro=MakeImage(loaded.highlight.width,loaded.highlight.height);
+            atlas=std::move(loaded);
+        }
+        const int threshold=static_cast<int>(std::ceil(std::clamp(progress,0.f,1.f)*255));
+        if(threshold==atlas.threshold)return;
+        // Recalculate changed pixels against the final threshold, including
+        // backwards jumps/restarted intros. Duplicate events are harmless.
+        for(int step=std::min(threshold,atlas.threshold)+1;step<=std::max(threshold,atlas.threshold);++step)
+            for(const size_t i:atlas.events[step]) {
+                const float high=atlas.highlight.pixels[i+2]<threshold?atlas.highlight.pixels[i+1]/255.f:0;
+                const float low=atlas.background.pixels[i+2]<threshold?atlas.background.pixels[i+1]/255.f:0;
+                // Same shader and draw order: white highlight, then Gray(.6).
+                const uint8_t rgb=Byte(255*high*(1-low)+153*low);
+                intro.pixels[i]=intro.pixels[i+1]=intro.pixels[i+2]=rgb;
+                intro.pixels[i+3]=Byte(255*(high*(1-low)+low));
+            }
+        atlas.threshold=threshold;
+        ++intro.revision;
     }
     const Image& GetImage(Texture texture, const Image& background) const {
         return texture == Texture::Background ? background : images[static_cast<size_t>(texture)];
@@ -326,7 +477,7 @@ struct Renderer::Impl {
                 const float v = (-dx * sine + dy * cosine) * inverse_height + 0.5f;
                 if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
                 if (q.flip_x) u = 1 - u;
-                const auto src = Sample(image, u, v);
+                const auto src = Sample(image, q.u0+u*(q.u1-q.u0),q.v0+v*(q.v1-q.v0));
                 const float remaining = q.additive ? 1.f : 1.f - src[3] * alpha / 255.f;
                 for (size_t c = 0; c < 3; ++c) dst[c] = Byte(src[c] * tint[c] + dst[c] * remaining);
                 dst[3] = 255;
@@ -387,13 +538,20 @@ struct Renderer::Impl {
             power = 1; while (power <= height / 2) power *= 2; height = power;
         }
         if (caps.TextureCaps & D3DPTEXTURECAPS_SQUAREONLY) width = height = std::min(width, height);
-        IDirect3DTexture9* replacement{};
-        HRESULT result = device->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8,
-            D3DPOOL_MANAGED, &replacement, nullptr);
-        if (FAILED(result)) return result;
+        // Animated lazer fill changes its contents, not its dimensions. Reuse
+        // the managed texture instead of allocating/releasing a GPU resource
+        // on every frame. Managed textures also survive a D3D9 Reset.
+        const bool reuse=texture.value && texture.width==image.width && texture.height==image.height;
+        IDirect3DTexture9* replacement=reuse?texture.value:nullptr;
+        HRESULT result=S_OK;
+        if(!reuse) {
+            result = device->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8,
+                D3DPOOL_MANAGED, &replacement, nullptr);
+            if (FAILED(result)) return result;
+        }
         D3DLOCKED_RECT locked{};
         result = replacement->LockRect(0, &locked, nullptr, 0);
-        if (FAILED(result)) { replacement->Release(); return result; }
+        if (FAILED(result)) { if(!reuse)replacement->Release(); return result; }
         for (uint32_t y = 0; y < height; ++y) {
             auto* dst = static_cast<uint8_t*>(locked.pBits) + size_t(y) * size_t(locked.Pitch);
             if (width == image.width && height == image.height)
@@ -405,8 +563,8 @@ struct Renderer::Impl {
             }
         }
         result = replacement->UnlockRect(0);
-        if (FAILED(result)) { replacement->Release(); return result; }
-        if (texture.value) texture.value->Release();
+        if (FAILED(result)) { if(!reuse)replacement->Release(); return result; }
+        if (!reuse && texture.value) texture.value->Release();
         texture = {replacement, image.revision, image.width, image.height};
         return S_OK;
     }
@@ -421,7 +579,7 @@ struct Renderer::Impl {
             const float u = xs[i] + 0.5f;
             corners[i] = {q.x + x * cosine - y * sine - 0.5f,
                 q.y + x * sine + y * cosine - 0.5f, 0, 1, tint,
-                q.flip_x ? 1.f - u : u, ys[i] + 0.5f};
+                q.u0+(q.flip_x ? 1.f - u : u)*(q.u1-q.u0),q.v0+(ys[i]+.5f)*(q.v1-q.v0)};
         }
         for (const size_t index : {0u, 1u, 2u, 0u, 2u, 3u}) vertices.push_back(corners[index]);
     }
@@ -502,6 +660,75 @@ struct Renderer::Impl {
 
 Renderer::Renderer() : impl_(std::make_unique<Impl>()) {}
 Renderer::~Renderer() = default;
+IntroFont MakeIntroFont(const std::array<std::wstring,3>& fields) {
+    IntroFont result;
+    std::vector<uint32_t> missing;
+    for(const auto& text:fields) for(size_t at=0;at<text.size();) {
+        const auto code=NextCodepoint(text,at);
+        if(!FindTorusGlyph(code) && std::find(missing.begin(),missing.end(),code)==missing.end())
+            missing.push_back(code);
+    }
+    if(missing.empty())return result;
+    // Built-in Latin glyphs retain the exact original texture/metrics. System
+    // font linking supplies Chinese and other Unicode glyphs, including XP.
+    // This small atlas is rebuilt only when the three user fields change.
+    constexpr int cell=128, pad=8;
+    const unsigned columns=static_cast<unsigned>(std::ceil(std::sqrt(missing.size())));
+    result.width=columns*cell;
+    result.height=static_cast<uint32_t>((missing.size()+columns-1)/columns)*cell;
+    result.pixels.resize(size_t(result.width)*result.height*4);
+    struct Gdi {
+        HDC dc{CreateCompatibleDC(nullptr)};
+        HBITMAP bitmap{};HFONT font{};HGDIOBJ old_bitmap{},old_font{};
+        ~Gdi(){
+            if(dc){if(old_bitmap)SelectObject(dc,old_bitmap);if(old_font)SelectObject(dc,old_font);}
+            if(bitmap)DeleteObject(bitmap);if(font)DeleteObject(font);if(dc)DeleteDC(dc);
+        }
+    } gdi;
+    if(!gdi.dc)throw Failure{E_OUTOFMEMORY};
+    BITMAPINFO info{};info.bmiHeader={sizeof(BITMAPINFOHEADER),cell,-cell,1,32,BI_RGB};
+    void* pixels{};
+    gdi.bitmap=CreateDIBSection(gdi.dc,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
+    gdi.font=CreateFontW(-100,0,0,0,FW_LIGHT,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei");
+    if(!gdi.bitmap || !gdi.font)throw Failure{E_OUTOFMEMORY};
+    gdi.old_bitmap=SelectObject(gdi.dc,gdi.bitmap);gdi.old_font=SelectObject(gdi.dc,gdi.font);
+    SetTextColor(gdi.dc,RGB(255,255,255));SetBkMode(gdi.dc,TRANSPARENT);
+    TEXTMETRICW metrics{};
+    if(!GetTextMetricsW(gdi.dc,&metrics))throw Failure{E_FAIL};
+    for(size_t index=0;index<missing.size();++index) {
+        const uint32_t code=missing[index];
+        wchar_t text[3]{static_cast<wchar_t>(code),0,0};int count=1;
+        if(code>0xffff) {
+            text[0]=static_cast<wchar_t>(0xd800+((code-0x10000)>>10));
+            text[1]=static_cast<wchar_t>(0xdc00+((code-0x10000)&1023));count=2;
+        }
+        SIZE extent{};
+        if(!GetTextExtentPoint32W(gdi.dc,text,count,&extent))throw Failure{E_FAIL};
+        GdiFlush();std::memset(pixels,0,cell*cell*4);
+        if(!TextOutW(gdi.dc,pad,0,text,count))throw Failure{E_FAIL};
+        GdiFlush();
+        const auto* src=static_cast<const uint8_t*>(pixels);
+        const uint32_t x=static_cast<uint32_t>(index%columns)*cell;
+        const uint32_t y=static_cast<uint32_t>(index/columns)*cell;
+        for(int row=0;row<cell;++row)for(int column=0;column<cell;++column) {
+            const auto* p=src+(row*cell+column)*4;
+            // Gray antialiasing becomes premultiplied white alpha. ClearType
+            // subpixels never bleed colours onto the black intro background.
+            const uint8_t alpha=static_cast<uint8_t>((unsigned(p[0])+p[1]+p[2]+1)/3);
+            auto* dst=result.pixels.data()+(size_t(y+row)*result.width+x+column)*4;
+            std::fill_n(dst,4,alpha);
+        }
+        result.glyphs.push_back({code,float(x),float(y),cell,cell,-pad,
+            float(84-metrics.tmAscent),float(extent.cx)});
+    }
+    return result;
+}
+void Renderer::SetIntroFont(IntroFont& font) {
+    auto& current=impl_->images[static_cast<size_t>(Texture::LazerCustomFont)];
+    Image next{font.width,font.height,std::move(font.pixels),current.revision+1};
+    current=std::move(next);
+}
 void Renderer::SetLogo(uint32_t kind, const TtpOsuVisualImage* source) {
     if (kind > 2 || (kind != 2 && source)) throw Failure{E_INVALIDARG};
     Image next;

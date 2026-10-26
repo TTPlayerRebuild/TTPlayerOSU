@@ -2,7 +2,7 @@
 
 仓库：<https://github.com/TTPlayerRebuild/TTPlayerOSU>
 
-`ttp_osu.dll` 负责解析 **`.osz` 压缩包**，并实现播放器的 **节拍星环** 视觉效果。`.osu` 是谱面元数据，不是插件对外支持的歌曲格式。
+`ttp_osu.dll` 负责解析 **`.osz` 压缩包**，并实现播放器的 **节拍星环**（osu!stable）和 **星环lazer**（osu!lazer）视觉效果。`.osu` 是谱面元数据，不是插件对外支持的歌曲格式。
 
 ## 功能
 
@@ -21,11 +21,23 @@
 - OSZ 使用当前音频关联谱面的 BPM、拍号与 Kiai 时间线；多难度按原 OSZ 枚举规则选择。普通歌曲使用可设置的备用 BPM，不推断 Kiai。
 - 默认中心图案是 `assets/TTPlayer.png`，由用户原图等比排入与 OSU! 相同的 1080×1080 画布，保留橙色外环并增加透明留白。源 PNG 嵌入 DLL，无需单独分发图片。
 - 节拍星环仅在视觉全屏及歌词组合全屏显示，优先使用 D3D9，设备不可用时使用 CPU。CPU/GPU 共用场景、层序和预乘透明度；普通窗口及皮肤画布不显示此效果。
-- 播放器入口：选项 → 全屏显示，选择节拍星环，或在全屏视觉菜单选择。选项 → 视觉效果 → 节拍星环，可设置五类效果、备用 BPM、基础色和背景色；FPS 范围 10–100。
+- 播放器入口：选项 → 全屏显示，选择节拍星环，或在全屏视觉菜单选择。选项 → 视觉效果 → 节拍星环，可设置五类效果、备用 BPM、基础色和背景色；FPS 范围 10–240。
 - 选项 → 视觉效果 → 节拍星环 → 徽标切换：千千静听（默认）、OSU!、自定义。自定义图片保持比例，选择取消或无效文件不会替换原图案。
 - 同页增加“进场效果”“退出效果”，独立保存，默认关闭。启用后进入全屏重播原版 welcome 视觉（约 2.79 秒），手动退出全屏播放徽标缩小、旋转和暗场（约 2.78 秒），结束后释放资源。使用原 `welcome_text@2x` 图片，保留当前徽标；不播放游戏提示音或改变音乐音量。
 
 视觉场景与绘制代码全部位于 DLL。宿主只提供连续 PCM、实际播放时钟、窗口/鼠标、通用只读归档 I/O 和已解码的背景。无 BASS、OpenTK 或 osu! 运行时依赖。实现、性能及验证边界见 [实现与验证第 6 节](docs/IMPLEMENTATION_20261025.md#6-节拍视觉扩展)。
+
+## 星环lazer
+
+- 单独实现 lazer 的 1024×768 逻辑画布、居中 512 单位徽标、512 点 FFT 和 200×5 环形频谱。
+- 节拍收缩、波纹、圆内动态三角形、悬停/按压、Kiai 喷星、左右闪光和同向背景视差均由 DLL 处理。
+- “OSU!”使用原版透明字形/边框及动态圆内内容；“千千静听”使用现有 `TTPlayer.png`，保留橙色外环，不加白圈。两种图案共用节拍动画；自定义图片继续保持比例。
+- 入口：全屏视觉菜单或“选项 → 全屏显示”选择 **星环lazer**；在“视觉效果 → 星环lazer”配置显示项、徽标和动画。
+- 进场、退出 **默认关闭**，与 stable 的开关分别保存。启用后采用默认 Triangles 入场（约 4 秒）及原版实际观察到的黑底淡出（约 3 秒）；退出没有旋转，不改歌曲或音量。
+- 千千静听徽标使用专用 RG 进度纹理：先逐段描绘橙环、耳机和波形轮廓，再在白闪时显示原彩色 PNG。采用与 OSU! 相同的 920ms 揭示及缩放时间轴；不修改原 PNG，也不添加常驻白色外环。自定义图片保持原有入场方式。
+- 仅在视觉全屏/歌词组合全屏显示。未安装插件或插件不支持 ABI 4 时隐藏 lazer，已有 stable 功能照常按其能力显示。
+
+详见 [原程序与源码分析](docs/OSU_LAZER_EVIDENCE_20261025.md) 和 [实现与验证第 11 节](docs/IMPLEMENTATION_20261025.md#11-星环lazer2026-10-25)。原生 D3D9/CPU 渲染与原版 D3D11 的抗锯齿、颜色和随机数存在差别，不宣称全帧逐像素相同。
 
 ## 安装与兼容范围
 
@@ -33,7 +45,7 @@
 
 本插件可选。未安装或接口不兼容时，播放器隐藏对应的 OSZ 文件筛选项、节拍星环菜单/选项标签页及全屏配置项；原来选择节拍星环的配置改用频谱分析。普通 ZIP/RAR 和其它视觉效果正常使用。只有旧 OSZ 接口的插件仍可使用 OSZ 导入，视觉入口保持隐藏。安装、更新或移除 DLL 后重新启动播放器。
 
-插件保留 `ttp_osu_query`（序号 1、OSZ ABI 1），`ttp_osu_query_visual`（序号 2）支持视觉 ABI 3，同时保留 ABI 1、2 的短函数表。徽标切换需要 ABI 2，进退场需要 ABI 3；旧 DLL 继续显示其支持的功能，缺少的选项隐藏。它不是旧版 `ttpGetSoundAddIn` 音频解码插件；**原版 5.7.9 播放器不会调用这些接口，单独放入原版 AddIn 不能增加 OSZ 导入或此视觉效果**。
+插件保留 `ttp_osu_query`（序号 1、OSZ ABI 1），`ttp_osu_query_visual`（序号 2）支持视觉 ABI 5，同时保留 ABI 1、2、3、4 的短函数表。徽标切换需要 ABI 2，进退场需要 ABI 3，lazer 需要 ABI 4，自定义进场文字需要 ABI 5；旧 DLL 继续显示其支持的功能，缺少的选项隐藏。它不是旧版 `ttpGetSoundAddIn` 音频解码插件；**原版 5.7.9 播放器不会调用这些接口，单独放入原版 AddIn 不能增加 OSZ 导入或此视觉效果**。
 
 同一个 x86 Release DLL 面向 XP SP3、Win7、Win10/11；CPU 需要 SSE2。使用 VC-LTL 5.3.1、YY-Thunks 1.2.2 构建，不要求用户另装 VC 运行库。实际验证范围见 [实现与验证](docs/IMPLEMENTATION_20261025.md)。
 
@@ -57,13 +69,13 @@ ZIP 仅含 `AddIn/ttp_osu.dll` 和内部 `SHA256SUMS.txt`。许可证保留在�
 
 ## Action 与播放器打包
 
-独立 Action 可手动构建；勾选 `Release a Version` 时创建日期版本 Release。播放器发布 Action 从 **TTPlayerRebuild/TTPlayerOSU 最新稳定 Release** 下载 ZIP，核验 GitHub 资产摘要、包内 SHA256、文件版本、x86／旧系统导入及两个导出，再放入 **ExtraAddIn 可选插件包**。
+独立 Action 可手动构建；勾选 `Release a Version` 时创建日期版本 Release。播放器发布 Action 从 **TTPlayerRebuild/TTPlayerOSU 最新稳定 Release** 下载 ZIP，核验 GitHub 资产摘要、包内 SHA256、文件版本、x86／旧系统导入，以及归档、视觉和可选歌曲库导出，再放入 **ExtraAddIn 可选插件包**。
 
 播放器主程序包不包含或依赖本 DLL，单独构建主程序也不下载它。制作 ExtraAddIn 前需先发布带视觉接口的插件版本；不兼容的旧发行包会被校验拒绝。没有 DLL 时不显示该效果及更新提示，也不在 EXE 内重复实现效果。
 
 ## 接口与测试
 
-ABI 头文件：归档 `include/ttp_osu/abi.h`，视觉 `include/ttp_osu/visual.h`。使用带大小/版本的结构、只读借用缓冲区和同步回调；无 STL 对象、内存释放权或 C++ 异常跨 DLL 边界。视觉实例内部同步，D3D9 创建/呈现/销毁必须在 HWND 所属线程执行；销毁或重新设置父窗口前先调用 `detach`。
+ABI 头文件：归档 `include/ttp_osu/abi.h`，视觉 `include/ttp_osu/visual.h`，歌曲库 `include/ttp_osu/library.h`（序号 3，ABI 1）。使用带大小/版本的结构、只读借用缓冲区和同步回调；无 STL 对象、内存释放权或 C++ 异常跨 DLL 边界。视觉实例内部同步，D3D9 创建/呈现/销毁必须在 HWND 所属线程执行；销毁或重新设置父窗口前先调用 `detach`。
 
 私有测试放在工作区 `rebuild/tests/archive_support/` 和 `rebuild/tests/osu_visual_20261025/`，不放入本仓库，不上传，不在 Action 中运行。CI 的静态导入与打包校验属于构建验证。
 
@@ -72,4 +84,28 @@ ABI 头文件：归档 `include/ttp_osu/abi.h`，视觉 `include/ttp_osu/visual.
 - [本项目 MIT](LICENSE)
 - [VC-LTL](docs/licenses/VC-LTL-LICENSE.txt)
 - [YY-Thunks](docs/licenses/YY-Thunks-LICENSE.txt)
+- [Realm Core](licenses/realm-core-LICENSE.txt) 和 [第三方声明](licenses/realm-core-THIRD-PARTY-NOTICES.txt)
+- [Realm SHA-2](licenses/realm-sha2-README.txt)
 - [图案资源来源及归属](assets/README.md)
+
+## 分别设置徽标、进场文字与帧率
+
+在“选项 → 视觉效果”的“节拍星环”和“星环lazer”选项卡中分别设置：
+
+- **分析显示速度**：各自保存 10～240 帧/秒，默认 60；普通效果的设置保留。
+- **徽标切换**：各自保存千千静听、OSU! 或自定义，以及各自的图片路径。
+- **星环lazer → 自定义文字**：默认不勾选。未勾选时，千千静听徽标显示 `welcome to TTPlayer`，OSU! 和自定义图片显示 `welcome to osu!`。勾选后使用左到右三个输入框，初始值为 `welcome`、`to`、`osu!`，可输入中文，每段最多 64 个 UTF-16 单元。空字段允许留空，过长的整句会缩小以适应画面。
+
+进场和退出效果仍默认关闭。文字设置不会自动打开进场效果；需要同时勾选“进场效果”才会在进入全屏时看到。文字沿用 lazer 原来的逐段出现、字距展开和消失时间轴，不改变 stable 的 welcome 图片。
+
+旧配置未保存独立 lazer 徽标时，先继承原先的共用徽标及路径，之后分别保存。旧 ABI 4 插件可以继续显示 lazer，但隐藏自定义文字控件；使用新文字功能需同时更新播放器与可选 DLL。
+
+帧率是目标更新速率；实际效果受分辨率、显卡、显示器刷新率及 CPU 回退影响。实现、性能数据及验证边界见 [第12节](docs/IMPLEMENTATION_20261025.md#12-独立徽标三段进场文字与240fps2026-10-25)。
+
+## 本地 osu! 歌曲库
+
+新版重建版可在播放列表左栏空白处右键，勾选“显示osu列表”或“显示osu!lazer列表”。DLL 分别枚举 stable 的 Songs 中的谱面，以及 lazer 的 `client.realm` 元数据和 `files` 哈希文件，返回音频、标题、艺术家、背景和代表谱面。相同集合中的相同音频只出现一次，多音频集合保留多首。
+
+宿主在后台读取并展示两个独立临时列表；普通列表不受影响。没有 DLL 时隐藏菜单和 osu! 设置页。旧 DLL 缺少歌曲库接口时菜单不可用，需要更新 DLL。
+
+lazer 使用固定的 Realm Core 20.1.2，只静态链接存储模块；构建下载并校验摘要，最终无需安装 Realm、.NET 或 osu!。读取上限为 256MiB 的数据库内存快照，不创建锁或管理文件。游戏正在占用数据库时，请先关闭 lazer 后重新勾选。未来不兼容的数据库结构会返回错误，不执行迁移。详见 [实现记录第 14 节](docs/IMPLEMENTATION_20261025.md#14-本地歌曲库2026-10-26)。

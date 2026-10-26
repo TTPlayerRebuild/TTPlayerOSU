@@ -4,9 +4,13 @@
 #include <cstdint>
 #include <span>
 #include <vector>
+#include "visual_text.h"
 
 namespace ttp_osu::visual {
-enum class Texture { White, Logo, Spectrum, Star, Flash, Shockwave, Background, Welcome };
+enum class Texture { White, Logo, Spectrum, Star, Flash, Shockwave, Background, Welcome,
+    LazerLogo, LazerFill, LazerStar, LazerFlash, LazerIntro, LazerFont, LazerCustomFont,
+    RulesetOsu, RulesetTaiko, RulesetCatch, RulesetMania, Triangle, OutlineTriangle, LazerCircle,
+    LazerTTPlayerIntro, Count };
 struct Image {
     uint32_t width{}, height{};
     std::vector<uint8_t> pixels; // tightly packed premultiplied BGRA
@@ -17,11 +21,16 @@ struct Quad {
     uint32_t color{0xffffffff}; // straight ARGB tint; renderer premultiplies it
     Texture texture{Texture::White};
     bool additive{}, flip_x{};
+    float u0{}, v0{}, u1{1}, v1{1}; // optional atlas subrectangle
 };
+struct LazerTriangle { float x{}, y{}, speed{}; };
 struct RenderFrame {
     uint32_t width{}, height{};
     COLORREF background{};
     std::vector<Quad> quads;
+    std::vector<LazerTriangle> lazer_triangles;
+    float lazer_intro_progress{-1}; // original R threshold / G alpha shader
+    uint64_t lazer_fill_revision{};
 };
 struct TimingPoint {
     double offset{}, beat_length{500}, beat_offset{};
@@ -46,6 +55,8 @@ public:
     void SetTiming(std::vector<TimingPoint>);
     void SetImage(const TtpOsuVisualImage*);
     void SetLogo(uint32_t kind, uint32_t width = 0, uint32_t height = 0);
+    void SetStyle(uint32_t style);
+    void SetIntroText(bool custom, std::array<std::wstring,3> fields, IntroFont font);
     void Transition(uint32_t phase, uint64_t now_ms);
     TtpOsuVisualTransitionState TransitionState(uint64_t now_ms) noexcept;
     void Update(const TtpOsuVisualFrame&);
@@ -69,6 +80,11 @@ private:
         double duration{300};
     };
     void ResetTemporal();
+    void ResetLazer();
+    void UpdateLazer(double elapsed, const TtpOsuVisualFrame&);
+    RenderFrame BuildLazerFrame(uint32_t width, uint32_t height) const;
+    float LazerLogoScale() const noexcept;
+    void LazerBurst();
     double TransitionAge() const noexcept;
     void Analyze(const TtpOsuVisualFrame&);
     void RingStep(double milliseconds, bool playing);
@@ -99,5 +115,24 @@ private:
     float logo_width_{337.5f}, logo_height_{337.5f};
     mutable float logical_width_{640}; // last surface, for circular pointer hit testing
     mutable float surface_logical_height_{480}; // includes centred narrow-screen letterboxing
+    uint32_t style_{}, logo_kind_{};
+    bool custom_intro_text_{};
+    std::array<std::wstring,3> intro_text_;
+    std::vector<IntroGlyph> intro_glyphs_;
+    uint32_t intro_font_width_{}, intro_font_height_{};
+    std::array<float, 200> lazer_bars_{};
+    std::vector<LazerTriangle> lazer_triangles_;
+    double lazer_sample_time_{}, lazer_triangle_time_{}, lazer_beat_age_{1e9};
+    float lazer_amplitude_scale_{1}, lazer_hover_scale_{1}, lazer_hover_from_{1}, lazer_hover_target_{1};
+    float lazer_hover_age_{500}, lazer_beat_strength_{}, lazer_velocity_{.5f};
+    float lazer_parallax_x_{}, lazer_parallax_y_{}, lazer_background_x_{}, lazer_background_y_{};
+    float lazer_flash_{}, lazer_visualizer_alpha_{.5f};
+    float lazer_pending_velocity_{};
+    float lazer_bounce_scale_{1}, lazer_bounce_from_{1}, lazer_bounce_age_{1000};
+    double lazer_click_age_{1e9};
+    bool lazer_button_down_{}, lazer_press_armed_{}, lazer_bounce_releasing_{};
+    uint32_t lazer_offset_{};
+    uint64_t lazer_fill_revision_{1};
+    bool lazer_over_{};
 };
 }

@@ -1,0 +1,46 @@
+{
+  "source": "TTPlayer.png",
+  "source_sha256": "ebe8e9d93bdc59ed28a429f4bf970622376d4dd81e16ea54fe9094a9f9163d28",
+  "size": [
+    1080,
+    1080
+  ],
+  "channels": {
+    "R": "strict progress threshold",
+    "G": "stroke alpha",
+    "B": 0,
+    "A": 255
+  },
+  "inner_ring_radius": 469.0,
+  "stroke_width": 4,
+  "supersample": 4,
+  "geometry": "calibrated cubic Bezier headphones/waveform and analytic rings",
+  "contours": [
+    {
+      "feature": "outer-ring",
+      "points": 4096
+    },
+    {
+      "feature": "inner-ring",
+      "points": 4096
+    },
+    {
+      "feature": "headphones",
+      "points": 7043
+    },
+    {
+      "feature": "waveform",
+      "points": 3345
+    }
+  ],
+  "files": {
+    "ttplayer-lazer-intro-highlight.png": {
+      "sha256": "ae050575a31a42602b571bc6ed4d9be5942670711f337ce09257f1d1eecf866f",
+      "pixel_sha256": "e65f7923e6eb0690513f90fbaf8bdf98849781487395fee223047f62fed26b34"
+    },
+    "ttplayer-lazer-intro-background.png": {
+      "sha256": "6a24935d9588a6fa6d285b7c2e3f860e0196bbb26c7bc583cdc8202250de05fd",
+      "pixel_sha256": "2cd04b581b5422e6b6cfe88353754160a1d092af1e82c699395ee1b2a00dae90"
+    }
+  }
+}

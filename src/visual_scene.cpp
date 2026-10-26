@@ -173,7 +173,7 @@ void Scene::Transition(uint32_t phase, uint64_t now) {
     // Repeating an active phase is idempotent. Once welcome has completed,
     // an explicit new entrance on the same instance starts it again.
     if (phase && phase == transition_phase_ &&
-        (phase != 1 || TransitionAge() < WelcomeCompleteMs)) return;
+        (phase != 1 || TransitionAge() < (style_ ? 4000 : WelcomeCompleteMs))) return;
     // A departure can interrupt welcome. Freeze its current mask/ring layout
     // and fade the remaining welcome text over the original 120ms; otherwise
     // both text and the spectrum above the black mask would disappear at once.
@@ -184,8 +184,8 @@ void Scene::Transition(uint32_t phase, uint64_t now) {
 }
 TtpOsuVisualTransitionState Scene::TransitionState(uint64_t now) noexcept {
     transition_now_ = std::max(transition_now_, now);
-    const double duration = transition_phase_ == 1 ? WelcomeCompleteMs :
-        transition_phase_ == 2 ? DepartureMs : 0;
+    const double duration = transition_phase_ == 1 ? (style_ ? 4000 : WelcomeCompleteMs) :
+        transition_phase_ == 2 ? (style_ ? 3000 : DepartureMs) : 0;
     const bool complete = !transition_phase_ || TransitionAge() >= duration;
     const uint32_t phase = transition_phase_ == 1 && complete ? 0 : transition_phase_;
     return {sizeof(TtpOsuVisualTransitionState), phase, complete ? 1u : 0u,
@@ -193,6 +193,7 @@ TtpOsuVisualTransitionState Scene::TransitionState(uint64_t now) noexcept {
 }
 void Scene::SetLogo(uint32_t kind, uint32_t width, uint32_t height) {
     if (kind > 2 || (kind == 2 && (!width || !height))) throw Failure{E_INVALIDARG};
+    logo_kind_ = kind;
     logo_width_ = logo_height_ = LogoDiameter;
     if (kind == 2) {
         const float divisor = static_cast<float>(std::max(width, height));
@@ -235,6 +236,7 @@ void Scene::SetImage(const TtpOsuVisualImage* value) {
     image_ = std::move(next);
 }
 void Scene::ResetTemporal() {
+    ResetLazer();
     fft_.fill(0); bars_.fill(0);
     particles_.clear(); waves_.clear();
     left_flash_ = right_flash_ = {};
@@ -245,14 +247,15 @@ void Scene::ResetTemporal() {
 }
 void Scene::Analyze(const TtpOsuVisualFrame& frame) {
     std::array<float, 2048> real{}, imaginary{};
-    const size_t count = std::min<size_t>(frame.count, real.size());
+    const size_t fft_size = style_ ? 512 : real.size();
+    const size_t count = std::min<size_t>(frame.count, fft_size);
     left_peak_ = right_peak_ = 0;
     // BASS_ChannelGetLevel's peak covers approximately 20 ms, separately per channel.
     // A small ASIO output buffer may use preceding, actually played PCM to fill
     // the FFT window. The cursor offset distinguishes that history from future
     // samples. Prefer 20ms forward; when insufficient, take the newest available
     // 20ms (including real history) rather than treating old window head as now.
-    const size_t peak_count = std::min<size_t>(frame.count, frame.sample_rate / 50);
+    const size_t peak_count = std::min<size_t>(frame.count, frame.sample_rate / (style_ ? 60 : 50));
     const size_t cursor = frame.pcm_cursor_offset;
     const size_t peak_start = frame.count - cursor >= peak_count ? cursor : frame.count - peak_count;
     const size_t peak_end = peak_start + peak_count;
@@ -262,22 +265,23 @@ void Scene::Analyze(const TtpOsuVisualFrame& frame) {
         left_peak_ = std::max(left_peak_, std::abs(left));
         right_peak_ = std::max(right_peak_, std::abs(right));
     }
+    const size_t fft_start = style_ ? std::min<size_t>(frame.pcm_cursor_offset, frame.count - count) : 0;
     for (size_t i = 0; i < count; ++i) {
-        const float l = frame.left[i] / 32768.0f;
-        const float r = frame.right ? frame.right[i] / 32768.0f : l;
-        const double window = .5 - .5 * std::cos(2 * Pi * static_cast<double>(i) / 2047.0);
+        const float l = frame.left[fft_start + i] / 32768.0f;
+        const float r = frame.right ? frame.right[fft_start + i] / 32768.0f : l;
+        const double window = .5 - .5 * std::cos(2 * Pi * static_cast<double>(i) / (fft_size - 1));
         real[i] = static_cast<float>((l + r) * .5 * window);
     }
-    for (size_t i = 1, j = 0; i < real.size(); ++i) {
-        size_t bit = real.size() >> 1;
+    for (size_t i = 1, j = 0; i < fft_size; ++i) {
+        size_t bit = fft_size >> 1;
         for (; j & bit; bit >>= 1) j ^= bit;
         j ^= bit;
         if (i < j) std::swap(real[i], real[j]);
     }
-    for (size_t length = 2; length <= real.size(); length <<= 1) {
+    for (size_t length = 2; length <= fft_size; length <<= 1) {
         const float wr = static_cast<float>(std::cos(-2 * Pi / static_cast<double>(length)));
         const float wi = static_cast<float>(std::sin(-2 * Pi / static_cast<double>(length)));
-        for (size_t base = 0; base < real.size(); base += length) {
+        for (size_t base = 0; base < fft_size; base += length) {
             float ur = 1, ui = 0;
             for (size_t j = 0; j < length / 2; ++j) {
                 const size_t a = base + j, b = a + length / 2;
@@ -292,12 +296,12 @@ void Scene::Analyze(const TtpOsuVisualFrame& frame) {
     }
     // Normalize a bin-centred full-scale sine to 1 before the menu's gain.
     // Original welcome pre-stage uses 2, then restores 1.6 at t=2438ms.
-    analyzed_intro_ = transition_phase_ == 1 && TransitionAge() < WelcomeRevealMs;
-    const float fft_gain = analyzed_intro_ ? 2.0f : 1.6f;
+    analyzed_intro_ = !style_ && transition_phase_ == 1 && TransitionAge() < WelcomeRevealMs;
+    const float fft_gain = style_ ? 1.0f : analyzed_intro_ ? 2.0f : 1.6f;
     // The DC component is single-sided, unlike the paired positive frequency bins.
     for (size_t i = 0; i < fft_.size(); ++i) {
-        const float normalization = (i ? 2.0f : 1.0f) / 1023.5f;
-        fft_[i] = std::hypot(real[i], imaginary[i]) * normalization * fft_gain;
+        const float normalization = (i ? 2.0f : 1.0f) / (static_cast<float>(fft_size - 1) * .5f);
+        fft_[i] = i < fft_size / 2 ? std::hypot(real[i], imaginary[i]) * normalization * fft_gain : 0;
     }
     amplitude_ = (left_peak_ + right_peak_) * .5f * Unit(frame.volume);
     ++fft_count_;
@@ -344,11 +348,21 @@ void Scene::Burst() {
 float Scene::FlashAlpha(const Flash& value) const {
     if (value.target == 0 && value.initial == 0) return 0;
     const double age = static_cast<double>(now_ - value.start);
-    if (age < 64) return value.initial + (value.target - value.initial) * static_cast<float>(age / 64);
-    const float t = Unit(static_cast<float>((age - 64) / std::max(1.0, value.duration - 64)));
+    const double fade_in = style_ ? 65 : 64;
+    if (age < fade_in) return value.initial + (value.target - value.initial) * static_cast<float>(age / fade_in);
+    const float t = Unit(static_cast<float>((age - fade_in) / std::max(1.0, value.duration - fade_in)));
     return value.target * (1 - t * t);
 }
-void Scene::Update(const TtpOsuVisualFrame& frame) {
+void Scene::Update(const TtpOsuVisualFrame& supplied) {
+    if (supplied.size < TTP_OSU_VISUAL_FRAME_ABI1_SIZE) throw Failure{E_INVALIDARG};
+    // Callers of ABI 1..3 can own a shorter allocation, including one directly
+    // before a guard page. Read only the bytes declared by the original prefix.
+    // Zero-initialize optional extension data rather than reading old padding.
+    TtpOsuVisualFrame frame{};
+    std::memcpy(&frame, &supplied, TTP_OSU_VISUAL_FRAME_ABI1_SIZE);
+    if (supplied.size >= sizeof(frame))
+        std::memcpy(&frame.pointer_buttons, &supplied.pointer_buttons, sizeof(frame.pointer_buttons));
+    frame.size = sizeof(frame);
     if (frame.playback > 4 || !std::isfinite(frame.position_ms) || std::abs(frame.position_ms) > 1e12 ||
         !std::isfinite(frame.volume) || !std::isfinite(frame.pointer_x) || !std::isfinite(frame.pointer_y) ||
         frame.count > 65536 || frame.pcm_cursor_offset > frame.count ||
@@ -369,7 +383,7 @@ void Scene::Update(const TtpOsuVisualFrame& frame) {
     pointer_x_ = Unit(frame.pointer_x); pointer_y_ = Unit(frame.pointer_y);
     pointer_inside_ = frame.pointer_inside != 0;
     const bool playing = frame.playback == 2;
-    const bool intro_fft = transition_phase_ == 1 && TransitionAge() < WelcomeRevealMs;
+    const bool intro_fft = !style_ && transition_phase_ == 1 && TransitionAge() < WelcomeRevealMs;
     if (playing && frame.count && (!analyzed_ || analyzed_intro_ != intro_fft || frame.revision != revision_ ||
         frame.pcm_cursor_offset != analyzed_cursor_offset_)) Analyze(frame);
     if (playing && frame.count) amplitude_ = (left_peak_ + right_peak_) * .5f * Unit(frame.volume);
@@ -377,6 +391,7 @@ void Scene::Update(const TtpOsuVisualFrame& frame) {
         const float decay = static_cast<float>(std::pow(.9, dt / FrameMs));
         left_peak_ *= decay; right_peak_ *= decay; amplitude_ *= decay;
     }
+    if (style_) { UpdateLazer(dt, frame); return; }
     const double position = frame.playback == 0 || frame.playback == 4 ? static_cast<double>(now_ % 1000) : frame.position_ms;
     BeatState next = EvaluateTiming(frame.playback == 0 || frame.playback == 4 ? std::span<const TimingPoint>{} : timing_,
         position, frame.playback == 0 || frame.playback == 4 ? 60 : options_.fallback_bpm);
@@ -441,6 +456,7 @@ void Scene::Update(const TtpOsuVisualFrame& frame) {
 
 RenderFrame Scene::BuildFrame(uint32_t width, uint32_t height) const {
     if (!width || !height || width > 16384 || height > 16384) throw Failure{E_INVALIDARG};
+    if (style_) return BuildLazerFrame(width, height);
     RenderFrame result{width, height, options_.background, {}};
     result.quads.reserve(1024 + particles_.size() + waves_.size() + 8);
     // Original Screen/viewport caps H at floor(W*.8) (0x060011B9,
@@ -566,6 +582,7 @@ TtpOsuVisualStats Scene::Stats() const noexcept {
         -.003f * static_cast<float>(std::min(TransitionAge(), DepartureMs) / FrameMs) : 0;
     return {sizeof(TtpOsuVisualStats), static_cast<uint32_t>(particles_.size()), bursts_, fft_count_,
         static_cast<uint32_t>(timing_.size()), beat_.kiai ? 1u : 0u, 0,
-        1.05f + hover_ + departure_scale - .05f * Ease(pulse_), FlashAlpha(left_flash_), FlashAlpha(right_flash_), revision_};
+        style_ ? LazerLogoScale() : 1.05f + hover_ + departure_scale - .05f * Ease(pulse_),
+        FlashAlpha(left_flash_), FlashAlpha(right_flash_), revision_};
 }
 }

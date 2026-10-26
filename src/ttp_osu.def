@@ -2,3 +2,4 @@ LIBRARY ttp_osu
 EXPORTS
     ttp_osu_query=_ttp_osu_query@8 @1
     ttp_osu_query_visual=_ttp_osu_query_visual@8 @2
+    ttp_osu_library_query=_ttp_osu_library_query@8 @3

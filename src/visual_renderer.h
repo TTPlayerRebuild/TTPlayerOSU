@@ -7,6 +7,7 @@ struct TtpOsuVisualImage;
 namespace ttp_osu::visual {
 struct RenderFrame;
 struct Image;
+struct IntroFont;
 
 // All device operations, including destruction, belong to the target window's
 // message thread. Paint is independent of the device and may run on the host's
@@ -23,6 +24,7 @@ public:
     uint32_t Backend() const noexcept;
     bool CanDetach() const noexcept;
     void SetLogo(uint32_t kind, const TtpOsuVisualImage* image);
+    void SetIntroFont(IntroFont& font);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

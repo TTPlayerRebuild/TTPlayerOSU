@@ -139,7 +139,7 @@ HRESULT WINAPI SetImage(void* opaque, const TtpOsuVisualImage* image) noexcept {
 HRESULT WINAPI Update(void* opaque, const TtpOsuVisualFrame* frame) noexcept {
     return Boundary([&]() -> HRESULT {
         auto& instance = Get(opaque);
-        if (!frame || frame->size < sizeof(*frame)) return E_INVALIDARG;
+        if (!frame || frame->size < TTP_OSU_VISUAL_FRAME_ABI1_SIZE) return E_INVALIDARG;
         std::lock_guard lock(instance.mutex);
         instance.scene.Update(*frame);
         return S_OK;
@@ -212,6 +212,36 @@ HRESULT WINAPI TransitionState(void* opaque, uint64_t now, TtpOsuVisualTransitio
         return S_OK;
     });
 }
+HRESULT WINAPI IntroText(void* opaque, const wchar_t* first, const wchar_t* second, const wchar_t* third) noexcept {
+    return Boundary([&]() -> HRESULT {
+        auto& instance=Get(opaque);
+        const bool custom=first || second || third;
+        if(custom && (!first || !second || !third))return E_INVALIDARG;
+        std::array<std::wstring,3> fields;
+        if(custom) {
+            const wchar_t* inputs[]{first,second,third};
+            for(size_t i=0;i<3;++i) {
+                const size_t length=wcsnlen(inputs[i],65);
+                if(length>64)return E_INVALIDARG;
+                fields[i].assign(inputs[i],length);
+            }
+        }
+        // Only settings changes generate the Unicode atlas, never a frame.
+        auto font=MakeIntroFont(fields);
+        std::lock_guard lock(instance.mutex);
+        instance.renderer.SetIntroFont(font);
+        instance.scene.SetIntroText(custom,std::move(fields),std::move(font));
+        return S_OK;
+    });
+}
+HRESULT WINAPI Style(void* opaque, uint32_t style) noexcept {
+    return Boundary([&]() -> HRESULT {
+        auto& instance = Get(opaque);
+        std::lock_guard lock(instance.mutex);
+        instance.scene.SetStyle(style);
+        return S_OK;
+    });
+}
 }
 }
 
@@ -219,11 +249,13 @@ extern "C" HRESULT WINAPI ttp_osu_query_visual(uint32_t version, TtpOsuVisualApi
     if (!out) return E_POINTER;
     if (version < 1 || version > TTP_OSU_VISUAL_ABI) return E_NOINTERFACE;
     const uint32_t bytes = version == 1 ? TTP_OSU_VISUAL_ABI1_SIZE :
-        version == 2 ? TTP_OSU_VISUAL_ABI2_SIZE : sizeof(*out);
+        version == 2 ? TTP_OSU_VISUAL_ABI2_SIZE :
+        version == 3 ? TTP_OSU_VISUAL_ABI3_SIZE :
+        version == 4 ? TTP_OSU_VISUAL_ABI4_SIZE : sizeof(*out);
     if (out->size < bytes) return E_INVALIDARG;
     using namespace ttp_osu::visual;
     const TtpOsuVisualApi api{bytes, version, Create, Destroy, Configure, Timing, ArchiveTiming,
-        SetImage, Update, Paint, Present, Detach, Stats, SetLogo, Transition, TransitionState};
+        SetImage, Update, Paint, Present, Detach, Stats, SetLogo, Transition, TransitionState, Style, IntroText};
     // Old callers own shorter tables: never touch an appended function slot.
     std::memcpy(out, &api, bytes);
     return S_OK;

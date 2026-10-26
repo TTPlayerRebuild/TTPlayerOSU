@@ -5,3 +5,16 @@
 102 RCDATA "@TTP_OSU_ORIGINAL_LOGO_FILE@"
 // Original welcome_text@2x, byte-for-byte; decoded only for an enabled entrance.
 103 RCDATA "@TTP_OSU_WELCOME_FILE@"
+// osu!lazer resources are unmodified, with attribution in assets/README.md.
+104 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-logo.png"
+105 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-star.png"
+106 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-intro-highlight.png"
+107 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-intro-background.png"
+108 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-font.png"
+109 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-ruleset-Osu.png"
+110 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-ruleset-Taiko.png"
+111 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-ruleset-Catch.png"
+112 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-lazer-ruleset-Mania.png"
+// TTPlayer-specific RG reveal DATA, derived from 101 without modifying it.
+113 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/ttplayer-lazer-intro-highlight.png"
+114 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/ttplayer-lazer-intro-background.png"

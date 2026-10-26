@@ -48,15 +48,8 @@ bool ValidImage(const Image& image) {
     return image.width && image.height && image.width <= 16384 && image.height <= 16384 &&
         uint64_t(image.width) * image.height * 4 == image.pixels.size();
 }
-float RoundedBox(float x, float y, float half_width, float half_height, float radius) {
-    const float dx = std::abs(x) - half_width + radius;
-    const float dy = std::abs(y) - half_height + radius;
-    return std::hypot(std::max(dx, 0.f), std::max(dy, 0.f)) +
-        std::min(std::max(dx, dy), 0.f) - radius;
-}
-
-// The user-supplied PNG is embedded byte-for-byte. Decode its native dimensions
-// and alpha without drawing text, recoloring or substituting extracted osu! art.
+// Decode the embedded PNG's native dimensions and premultiplied alpha. The
+// default resource is the user-supplied logo; other ids select explicit assets.
 Image MakeLogo(uint32_t id = 101) {
     const HMODULE module = reinterpret_cast<HMODULE>(&__ImageBase);
     HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(id), RT_RCDATA);
@@ -100,17 +93,6 @@ Image MakeLogo(uint32_t id = 101) {
         std::memcpy(image.pixels.data() + size_t(y) * image.width * 4, source, size_t(image.width) * 4);
     }
     bitmap.UnlockBits(&data);
-    return image;
-}
-Image MakeSpectrum() {
-    Image image = MakeImage(128, 32);
-    for (uint32_t y = 0; y < 32; ++y) for (uint32_t x = 0; x < 128; ++x) {
-        const float outer = RoundedBox(float(x) - 63.5f, float(y) - 8.f, 62.f, 7.f, 5.f);
-        const float outline = std::clamp(1.f - std::abs(outer), 0.f, 1.f);
-        const float solid = 0.7f * std::clamp(0.5f - RoundedBox(float(x) - 63.5f,
-            float(y) - 25.f, 61.5f, 2.f, 2.f), 0.f, 1.f);
-        Pixel(image, x, y, Premultiplied(255, 255, 255, std::max(outline, solid)));
-    }
     return image;
 }
 Image MakeStar() {
@@ -326,7 +308,11 @@ struct Renderer::Impl {
             images[static_cast<size_t>(Texture::White)].pixels.end(), uint8_t(255));
         if (images[static_cast<size_t>(Texture::Logo)].pixels.empty())
             images[static_cast<size_t>(Texture::Logo)] = MakeLogo();
-        images[static_cast<size_t>(Texture::Spectrum)] = MakeSpectrum();
+        // menu-vis is an open-ended outline plus a much shorter solid bar.
+        // Stretching two equally long procedural capsules changed the ring's
+        // silhouette and brightness. Keep both original resolution variants.
+        images[static_cast<size_t>(Texture::Spectrum)] = MakeLogo(116);
+        images[static_cast<size_t>(Texture::SpectrumHigh)] = MakeLogo(115);
         images[static_cast<size_t>(Texture::Star)] = MakeStar();
         images[static_cast<size_t>(Texture::Flash)] = MakeFlash();
         images[static_cast<size_t>(Texture::Shockwave)] = MakeShockwave();

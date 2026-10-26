@@ -18,3 +18,6 @@
 // TTPlayer-specific RG reveal DATA, derived from 101 without modifying it.
 113 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/ttplayer-lazer-intro-highlight.png"
 114 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/ttplayer-lazer-intro-background.png"
+// Original stable menu-vis textures; preserve the asymmetric short solid bar.
+115 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-menu-spectrum@2x.png"
+116 RCDATA "@TTP_OSU_ASSET_DIRECTORY@/osu-menu-spectrum.png"

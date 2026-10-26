@@ -309,12 +309,11 @@ void Scene::Analyze(const TtpOsuVisualFrame& frame) {
     analyzed_cursor_offset_ = frame.pcm_cursor_offset;
     revision_ = frame.revision;
 }
-void Scene::RingStep(double milliseconds, bool playing) {
-    const float decay = static_cast<float>(std::pow(.949999988079071, milliseconds / FrameMs));
-    if (!playing) for (auto& value : fft_) value = value < .01f ? 0 : value * decay;
+void Scene::RingStep(double milliseconds) {
+    const double decay = std::pow(.949999988079071, milliseconds / FrameMs);
     for (size_t i = 0; i < bars_.size(); ++i) {
         auto& bar = bars_[1023 - i];
-        bar = std::max(bar, fft_[(i + shift_) % 1024] * 3) * decay;
+        bar = static_cast<float>(std::max(bar, fft_[(i + shift_) % 1024] * 3) * decay);
         if (bar < .01f) bar = 0;
     }
 }
@@ -437,16 +436,24 @@ void Scene::Update(const TtpOsuVisualFrame& supplied) {
         if (transition_phase_ != 2)
             hover_ = std::clamp(hover_ + (over ? .012f : -.012f), 0.0f, .1f);
     }
+    // The original FFT base class (0x06002961) decays the source once per
+    // frame, before the circular visualizer subdivides time into 10ms steps.
+    if (!playing || !frame.count) {
+        const float decay = static_cast<float>(std::pow(.949999988079071, dt / FrameMs));
+        for (auto& value : fft_) value = value < .01f ? 0 : value * decay;
+    }
     double remaining = dt;
     while (remaining > 0) {
-        const double slice = std::min(remaining, 10.0 - ring_remainder_);
-        RingStep(slice, playing && frame.count);
-        remaining -= slice;
-        ring_remainder_ += slice;
-        if (ring_remainder_ >= 10.0 - 1e-9) {
-            ring_remainder_ = 0;
-            shift_ = (shift_ + 50) % 1024;
-        }
+        ring_remainder_ += remaining;
+        const double overflow = std::max(0.0, ring_remainder_ - 10.0);
+        remaining -= overflow;
+        // 0x0600128D advances only on overflow. At an exact 10ms boundary
+        // the next frame first injects its new FFT at the old offset for 0ms.
+        RingStep(remaining);
+        if (overflow == 0) break;
+        ring_remainder_ = 0;
+        shift_ = (shift_ + 50) % 1024;
+        remaining = overflow;
     }
     std::erase_if(particles_, [&](const Particle& particle) {
         return now_ >= particle.start && now_ - particle.start >= particle.lifetime;
@@ -546,6 +553,13 @@ RenderFrame Scene::BuildFrame(uint32_t width, uint32_t height) const {
                 78 * TextureToLogical * text_scale * text_scale_y, 0, Color(RGB(255,255,255), text_alpha));
     }
     if (options_.flags & TTP_OSU_SPECTRUM) {
+        // Stable selects @2x at an effective viewport height of 800 (0x06001DDD).
+        // Its texture dimensions use integer division: menu-vis@2x is 230x75,
+        // hence 115x37 logical pixels, with only the first 74 source rows drawn
+        // (0x06002F2F / 0x06003F17). Keep the original PNG intact and crop via UV.
+        const bool high_resolution = canvas_height >= 800;
+        const Texture spectrum = high_resolution ? Texture::SpectrumHigh : Texture::Spectrum;
+        const float spectrum_height = (high_resolution ? 37.f : 38.f) * .5f * TextureToLogical;
         const float radius = 150 * (1.05f + hover_ + departure_scale + .03f * (1-pulse_) * (1-pulse_)) +
             (welcome && welcome_age < WelcomeRevealMs ? 8.0f : 0.0f);
         // The original uses process-global startup time here. A DLL can enter
@@ -555,10 +569,15 @@ RenderFrame Scene::BuildFrame(uint32_t width, uint32_t height) const {
         for (size_t i = 0; i < bars_.size(); ++i) {
             const float alpha = std::max(0.0f, .4f * ring_alpha * std::min(1.0f, (bars_[i]-.04f)/.08f));
             if (alpha <= 0 || bars_[i] < .01f) continue;
-            const float theta = static_cast<float>(2 * Pi * (.4 + static_cast<double>(i) / 1024 * 4));
+            const float theta = 6.2831855f * (.4f + static_cast<float>(i) / 1024.f * 4.f);
             const float length = 115 * TextureToLogical * bars_[i];
-            add(Texture::Spectrum, cx + (radius+length*.5f)*std::cos(theta), cy+(radius+length*.5f)*std::sin(theta),
-                length, 38 * .5f * TextureToLogical, theta, Color(options_.accent, alpha), true);
+            // Sprite 0x06003F15 truncates alpha to a byte; keep the existing
+            // rounding policy of other effects independent of the stable ring.
+            const uint32_t tint = (Color(options_.accent) & 0x00ffffffu) |
+                (static_cast<uint32_t>(Unit(alpha) * 255.f) << 24);
+            add(spectrum, cx + (radius+length*.5f)*std::cos(theta), cy+(radius+length*.5f)*std::sin(theta),
+                length, spectrum_height, theta, tint, true);
+            if (high_resolution) result.quads.back().v1 = 74.f / 75.f;
         }
     }
     if (!logo_before_ring) add_logo();

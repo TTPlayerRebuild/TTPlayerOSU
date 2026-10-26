@@ -10,7 +10,7 @@ namespace ttp_osu::visual {
 enum class Texture { White, Logo, Spectrum, Star, Flash, Shockwave, Background, Welcome,
     LazerLogo, LazerFill, LazerStar, LazerFlash, LazerIntro, LazerFont, LazerCustomFont,
     RulesetOsu, RulesetTaiko, RulesetCatch, RulesetMania, Triangle, OutlineTriangle, LazerCircle,
-    LazerTTPlayerIntro, Count };
+    LazerTTPlayerIntro, SpectrumHigh, Count };
 struct Image {
     uint32_t width{}, height{};
     std::vector<uint8_t> pixels; // tightly packed premultiplied BGRA
@@ -87,7 +87,7 @@ private:
     void LazerBurst();
     double TransitionAge() const noexcept;
     void Analyze(const TtpOsuVisualFrame&);
-    void RingStep(double milliseconds, bool playing);
+    void RingStep(double milliseconds);
     void Burst();
     float FlashAlpha(const Flash&) const;
     uint32_t Random() noexcept;

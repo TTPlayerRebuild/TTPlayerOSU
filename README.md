@@ -75,6 +75,14 @@ ZIP 仅含 `AddIn/ttp_osu.dll` 和内部 `SHA256SUMS.txt`。许可证保留在�
 
 ## 接口与测试
 
+安装信息由 `include/ttp_osu/installation.h` 的独立 ABI 1 提供，导出
+`ttp_osu_installation_query`（序号 4）。DLL 负责 exe 的 PE/版本资源特征识别、
+Windows 用户目录下的安装位置发现、stable `BeatmapDirectory` 以及 lazer
+`storage.ini`/`framework.ini` 解析；宿主保留设置界面、配置保存和菜单接入。
+两条程序路径中任一识别为 osu! 或 lazer，即可启用插件支持的两种全屏星环。
+新宿主配旧 DLL 时保留 OSZ/歌曲库能力，但程序识别不可用，星环入口隐藏并提示更新插件。
+更新时同时替换播放器和可选 DLL。详见 [安装信息接口与迁移](docs/INSTALLATION_API_20261027.md)。
+
 ABI 头文件：归档 `include/ttp_osu/abi.h`，视觉 `include/ttp_osu/visual.h`，歌曲库 `include/ttp_osu/library.h`（序号 3，ABI 1）。使用带大小/版本的结构、只读借用缓冲区和同步回调；无 STL 对象、内存释放权或 C++ 异常跨 DLL 边界。视觉实例内部同步，D3D9 创建/呈现/销毁必须在 HWND 所属线程执行；销毁或重新设置父窗口前先调用 `detach`。
 
 私有测试放在工作区 `rebuild/tests/archive_support/` 和 `rebuild/tests/osu_visual_20261025/`，不放入本仓库，不上传，不在 Action 中运行。CI 的静态导入与打包校验属于构建验证。

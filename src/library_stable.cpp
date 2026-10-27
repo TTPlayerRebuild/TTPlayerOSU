@@ -1,4 +1,5 @@
 #include "library_internal.h"
+#include "installation_internal.h"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -107,7 +108,7 @@ std::optional<std::vector<uint8_t>> ReadText(const std::filesystem::path& path,c
         }
     }
 }
-std::optional<std::filesystem::path> ConfiguredSongs(const std::filesystem::path& install,const Context& context) {
+std::optional<std::filesystem::path> ConfiguredSongs(const std::filesystem::path& install,const Context& context,bool allow_offline=false) {
     std::vector<std::filesystem::path> configs;
     if(const auto user=Environment(L"USERNAME")) {
         // USERNAME cannot introduce an alternate path through this filename.
@@ -128,7 +129,7 @@ std::optional<std::filesystem::path> ConfiguredSongs(const std::filesystem::path
             const auto value=Unquote(line.substr(split+1));if(value.empty())break;
             const auto requested=std::filesystem::path(value);
             const auto selected=Absolute(requested.is_absolute()?requested:install/requested);
-            if(Directory(selected))return selected;
+            if(allow_offline || Directory(selected))return selected;
             // A user-specified storage path must not silently read a stale
             // default Songs directory when that storage is disconnected.
             throw Failure{HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND)};
@@ -250,16 +251,15 @@ std::vector<Entry> Entries(const std::filesystem::path& directory,const Context&
 
 std::filesystem::path DiscoverStableRoot(const Context& context) {
     context.Check();
-    if(const auto local=Environment(L"LOCALAPPDATA")) {
-        const auto root=Absolute(std::filesystem::path(*local)/L"osu!");
-        if(Directory(root))return root;
-    }
-    // XP does not normally define LOCALAPPDATA.
-    if(const auto profile=Environment(L"USERPROFILE")) {
-        const auto root=Absolute(std::filesystem::path(*profile)/L"Local Settings"/L"Application Data"/L"osu!");
-        if(Directory(root))return root;
-    }
+    const auto root=installation::DefaultExecutable(1).parent_path();
+    if(Directory(root))return root;
     throw Failure{HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND)};
+}
+
+std::filesystem::path StableSongsDirectory(const std::filesystem::path& installation) {
+    const TtpOsuLibraryHost host{sizeof(host)};
+    if(const auto configured=ConfiguredSongs(installation,Context{host},true))return *configured;
+    return installation/L"Songs";
 }
 
 std::vector<Track> EnumerateStable(const std::filesystem::path& supplied,const Context& context) {

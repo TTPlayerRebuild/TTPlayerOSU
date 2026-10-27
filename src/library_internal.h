@@ -17,6 +17,7 @@ struct Context {
     void Progress(uint32_t phase,uint64_t done,uint64_t total,const wchar_t* current) const;
 };
 std::filesystem::path DiscoverStableRoot(const Context&);
+std::filesystem::path StableSongsDirectory(const std::filesystem::path& installation);
 std::vector<Track> EnumerateStable(const std::filesystem::path&,const Context&);
 // Shared bounds: at most 1M maps / 250K distinct songs and 512MiB text retained.
 inline constexpr size_t MaximumMaps=1000000, MaximumTracks=250000;

@@ -1,4 +1,5 @@
 #include "realm_library.h"
+#include "installation_internal.h"
 #include <shlobj.h>
 #include <realm/group.hpp>
 #include <realm/list.hpp>
@@ -135,56 +136,12 @@ fs::path HashPath(const fs::path& files,std::wstring hash) {
     }
     return files/hash.substr(0,1)/hash.substr(0,2)/hash;
 }
-std::wstring Trim(std::wstring_view value) {
-    const auto start=value.find_first_not_of(L" \t\r\n");
-    if(start==std::wstring_view::npos) return {};
-    const auto end=value.find_last_not_of(L" \t\r\n");
-    return std::wstring(value.substr(start,end-start+1));
-}
-fs::path SpecialFolder(int id) {
-    wchar_t buffer[MAX_PATH]{};
-    if(FAILED(SHGetFolderPathW(nullptr,id,nullptr,SHGFP_TYPE_CURRENT,buffer))) Fail(ERROR_PATH_NOT_FOUND);
-    return fs::path(buffer);
-}
-fs::path RedirectedRoot(const fs::path& root,const Context& context) {
-    const auto ini=root/L"storage.ini";
-    if(!RegularFile(ini)) return root;
-    const auto bytes=Snapshot(ini,context,1024*1024,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE);
-    if(bytes.empty()) return root;
-    std::wstring text;
-    if(bytes.size()>=2 && static_cast<unsigned char>(bytes[0])==0xff && static_cast<unsigned char>(bytes[1])==0xfe) {
-        if(bytes.size()%2) Fail(ERROR_INVALID_DATA);
-        for(size_t i=2;i+1<bytes.size();i+=2)
-            text.push_back(static_cast<wchar_t>(static_cast<unsigned char>(bytes[i])|(static_cast<unsigned char>(bytes[i+1])<<8)));
-    } else {
-        size_t offset=bytes.size()>=3 && static_cast<unsigned char>(bytes[0])==0xef &&
-            static_cast<unsigned char>(bytes[1])==0xbb && static_cast<unsigned char>(bytes[2])==0xbf?3:0;
-        text=FromUtf8(std::string_view(bytes.data()+offset,bytes.size()-offset));
-    }
-    size_t position=0;
-    while(position<text.size()) {
-        const auto end=text.find(L'\n',position);
-        const auto line=Trim(std::wstring_view(text).substr(position,end==std::wstring::npos?text.size()-position:end-position));
-        position=end==std::wstring::npos?text.size():end+1;
-        if(line.empty() || line[0]==L'#' || line[0]==L';') continue;
-        const auto equals=line.find(L'=');
-        if(equals==std::wstring::npos || Trim(std::wstring_view(line).substr(0,equals))!=L"FullPath") continue;
-        const auto value=Trim(std::wstring_view(line).substr(equals+1));
-        if(value.empty()) return root;
-        const fs::path custom(value);
-        if(!custom.is_absolute()) Fail(ERROR_INVALID_DATA);
-        return custom.lexically_normal();
-    }
-    return root;
-}
+
 }
 
 fs::path DiscoverLazerRoot(const Context& context) {
     context.Check();
-    auto root=SpecialFolder(CSIDL_APPDATA)/L"osu";
-    const auto installation=SpecialFolder(CSIDL_LOCAL_APPDATA)/L"osulazer"/L"current";
-    if(RegularFile(installation/L"framework.ini")) root=installation;
-    return RedirectedRoot(root,context);
+    return installation::LazerDataRoot(installation::DefaultLazerRoamingRoot(),installation::DefaultExecutable(2));
 }
 
 std::vector<Track> EnumerateLazer(const fs::path& input,const Context& context) {

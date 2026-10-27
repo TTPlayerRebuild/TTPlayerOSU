@@ -1,4 +1,5 @@
 #include "realm_library.h"
+#include "export_internal.h"
 #include "installation_internal.h"
 #include <shlobj.h>
 #include <realm/group.hpp>
@@ -142,6 +143,69 @@ fs::path HashPath(const fs::path& files,std::wstring hash) {
 fs::path DiscoverLazerRoot(const Context& context) {
     context.Check();
     return installation::LazerDataRoot(installation::DefaultLazerRoamingRoot(),installation::DefaultExecutable(2));
+}
+
+std::vector<ExportSet> PlanLazerExport(const fs::path& input,
+    const std::vector<std::wstring>& identities,const Context& context) {
+    auto root=input.lexically_normal();
+    if(root.filename().empty())root=root.parent_path();
+    if(FoldCase(root.filename().wstring())==L"FILES")root=root.parent_path();
+    root=fs::absolute(root).lexically_normal();
+    const auto files=root/L"files";
+    std::map<std::wstring,std::set<std::wstring>> requested;
+    for(const auto& value:identities) {
+        if(!value.starts_with(L"lazer:"))Fail(ERROR_INVALID_PARAMETER);
+        const auto split=value.find(L':',6);
+        if(split==value.npos || split==6)Fail(ERROR_INVALID_PARAMETER);
+        const auto hash=value.substr(split+1);HashPath(files,hash);
+        requested[value.substr(6,split-6)].insert(hash);
+    }
+    auto snapshot=Snapshot(root/L"client.realm",context,MaximumDatabaseBytes);
+    if(snapshot.empty())Fail(ERROR_INVALID_DATA);
+    try {
+        realm::Group group(realm::BinaryData(snapshot.data(),snapshot.size()),false);
+        const auto sets=group.get_table("class_BeatmapSet");
+        if(!sets)Fail(ERROR_NOT_SUPPORTED);
+        if(sets->size()>MaximumMaps)Fail(ERROR_FILE_TOO_LARGE);
+        std::vector<ExportSet> result;uint64_t done{},retained{};
+        for(const auto& set:*sets) {
+            context.Progress(TTP_OSU_EXPORT_PLAN,done++,sets->size(),L"client.realm");
+            if(Deleted(set))continue;
+            const auto identity=SetIdentity(set);auto wanted=requested.find(identity);
+            if(wanted==requested.end())continue;
+            ExportSet output;output.source_root=root;
+            const auto maps=Links(set,"Beatmaps");
+            for(size_t i=0;i<maps.size();++i) {
+                context.Check();const auto map=maps.get_object(i);if(Deleted(map))continue;
+                const auto metadata=Link(map,"Metadata",true);if(!metadata)continue;
+                auto title=String(metadata,"Title"),artist=String(metadata,"Artist");
+                if(title.empty())title=String(metadata,"TitleUnicode");
+                if(artist.empty())artist=String(metadata,"ArtistUnicode");
+                output.name=artist.empty()?title:artist+L" - "+title;break;
+            }
+            if(output.name.empty())output.name=identity;
+            if(const auto id=OnlineId(set);id>0)output.name=std::to_wstring(id)+L" "+output.name;
+            const auto usages=Links(set,"Files");
+            if(usages.size()>MaximumMaps)Fail(ERROR_FILE_TOO_LARGE);
+            bool has_map{};
+            for(size_t i=0;i<usages.size();++i) {
+                context.Check();const auto usage=usages.get_object(i);const auto file=Link(usage,"File",true);
+                if(!file)Fail(ERROR_INVALID_DATA);
+                auto name=ExportMemberName(String(usage,"Filename",true));
+                const auto hash=String(file,"Hash",true);const auto path=HashPath(files,hash);
+                if(!RegularFile(path))Fail(ERROR_FILE_NOT_FOUND);
+                retained+=2ull*(name.size()+path.native().size());
+                if(retained>MaximumTextBytes)Fail(ERROR_FILE_TOO_LARGE);
+                has_map|=_wcsicmp(fs::path(name).extension().c_str(),L".osu")==0;
+                output.files.push_back({path,std::move(name)});
+                wanted->second.erase(hash);
+            }
+            if(!has_map || !wanted->second.empty())Fail(ERROR_FILE_NOT_FOUND);
+            result.push_back(std::move(output));requested.erase(wanted);
+        }
+        if(!requested.empty())Fail(ERROR_NOT_FOUND);
+        return result;
+    }catch(const realm::Exception&){Fail(ERROR_INVALID_DATA);}
 }
 
 std::vector<Track> EnumerateLazer(const fs::path& input,const Context& context) {

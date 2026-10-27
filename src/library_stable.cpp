@@ -1,4 +1,5 @@
 #include "library_internal.h"
+#include "export_internal.h"
 #include "installation_internal.h"
 #include <algorithm>
 #include <array>
@@ -9,6 +10,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <set>
 #include <string_view>
 
 namespace ttp_osu::library {
@@ -260,6 +262,55 @@ std::filesystem::path StableSongsDirectory(const std::filesystem::path& installa
     const TtpOsuLibraryHost host{sizeof(host)};
     if(const auto configured=ConfiguredSongs(installation,Context{host},true))return *configured;
     return installation/L"Songs";
+}
+
+std::vector<ExportSet> PlanStableExport(const std::filesystem::path& supplied,
+    const std::vector<std::wstring>& identities,const Context& context) {
+    const auto root=ResolveSongs(supplied,context);
+    std::set<std::wstring,Insensitive> selected;
+    for(const auto& identity:identities) {
+        context.Check();
+        if(!identity.starts_with(L"stable:"))throw Failure{E_INVALIDARG};
+        const auto audio=Absolute(identity.substr(7));
+        if(!Within(root,audio))throw Failure{E_INVALIDARG};
+        auto relative=audio.lexically_relative(root);
+        // The library treats each immediate Songs subdirectory as one set.
+        const auto set=relative.has_parent_path()?root/(*relative.begin()):root;
+        if(!Reference(set/L"export.osu",set,audio.lexically_relative(set).wstring()))
+            throw Failure{HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)};
+        selected.insert(set.wstring());
+    }
+    std::vector<ExportSet> result;
+    for(const auto& value:selected) {
+        const std::filesystem::path directory(value);
+        ExportSet set;set.name=directory.filename().wstring();set.source_root=root;
+        std::vector<std::filesystem::path> pending{directory};
+        size_t directories{};bool has_map{};
+        while(!pending.empty()) {
+            context.Check();auto current=std::move(pending.back());pending.pop_back();
+            if(++directories>MaximumMaps)throw Failure{HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE)};
+            // Unlike discovery, export must report an unreadable resource,
+            // rather than silently deliver an incomplete beatmap package.
+            for(const auto& entry:std::filesystem::directory_iterator(current)) {
+                context.Check();const auto path=entry.path();const DWORD attributes=Attributes(path);
+                if(attributes==INVALID_FILE_ATTRIBUTES)throw Failure{HRESULT_FROM_WIN32(GetLastError())};
+                if(attributes&FILE_ATTRIBUTE_REPARSE_POINT)throw Failure{HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED)};
+                if(attributes&FILE_ATTRIBUTE_DIRECTORY) {
+                    if(std::distance(path.begin(),path.end())-std::distance(directory.begin(),directory.end())>64)
+                        throw Failure{HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE)};
+                    pending.push_back(path);continue;
+                }
+                if(set.files.size()>=MaximumMaps)throw Failure{HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE)};
+                auto name=ExportMemberName(path.lexically_relative(directory).wstring());
+                has_map|=_wcsicmp(path.extension().c_str(),L".osu")==0;
+                set.files.push_back({path,std::move(name)});
+                context.Progress(TTP_OSU_EXPORT_PLAN,set.files.size(),0,path.c_str());
+            }
+        }
+        if(!has_map)throw Failure{HRESULT_FROM_WIN32(ERROR_INVALID_DATA)};
+        result.push_back(std::move(set));
+    }
+    return result;
 }
 
 std::vector<Track> EnumerateStable(const std::filesystem::path& supplied,const Context& context) {

@@ -15,7 +15,7 @@ set(TTP_OSU_WELCOME_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/osu-welcome-text.pn
 set(TTP_OSU_ASSET_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 configure_file(src/visual_assets.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/visual_assets.rc" @ONLY)
 add_library(ttp_osu SHARED src/plugin.cpp src/parser.cpp src/visual_scene.cpp src/visual_lazer.cpp
-  src/library_api.cpp src/library_stable.cpp src/installation.cpp src/library_export.cpp
+  src/library_api.cpp src/library_stable.cpp src/installation.cpp src/library_export.cpp src/download_page.cpp
   src/visual_api.cpp src/visual_renderer.cpp src/ttp_osu.def
   "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/visual_assets.rc")

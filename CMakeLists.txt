@@ -16,13 +16,14 @@ set(TTP_OSU_ASSET_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 configure_file(src/visual_assets.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/visual_assets.rc" @ONLY)
 add_library(ttp_osu SHARED src/plugin.cpp src/parser.cpp src/visual_scene.cpp src/visual_lazer.cpp
   src/library_api.cpp src/library_stable.cpp src/installation.cpp src/library_export.cpp src/download_page.cpp
+  src/import.cpp src/import_stable.cpp
   src/visual_api.cpp src/visual_renderer.cpp src/ttp_osu.def
   "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/visual_assets.rc")
 ttp_osu_attach_realm(ttp_osu)
 add_dependencies(ttp_osu ttp_osu_version)
-target_include_directories(ttp_osu PUBLIC include PRIVATE src)
-target_link_libraries(ttp_osu PRIVATE user32 gdi32 gdiplus ole32 version)
+target_include_directories(ttp_osu PUBLIC include PRIVATE src "${ttp_osu_realm_sha2_SOURCE_DIR}")
+target_link_libraries(ttp_osu PRIVATE user32 gdi32 gdiplus ole32 version advapi32)
 target_compile_definitions(ttp_osu PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
   _WIN32_WINNT=0x0501 _CRT_SECURE_NO_WARNINGS)
 target_compile_options(ttp_osu PRIVATE /W4 /permissive- /EHsc /GR- /utf-8 /arch:SSE2)

@@ -6,3 +6,4 @@ EXPORTS
     ttp_osu_installation_query=_ttp_osu_installation_query@8 @4
     ttp_osu_export_query=_ttp_osu_export_query@8 @5
     ttp_osu_download_page_query=_ttp_osu_download_page_query@8 @6
+    ttp_osu_import_query=_ttp_osu_import_query@8 @7

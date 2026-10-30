@@ -1,5 +1,6 @@
 #include "realm_library.h"
 #include "export_internal.h"
+#include "import_internal.h"
 #include "installation_internal.h"
 #include <shlobj.h>
 #include <realm/group.hpp>
@@ -307,5 +308,59 @@ std::vector<Track> EnumerateLazer(const fs::path& input,const Context& context) 
         (void)error;
         Fail(ERROR_INVALID_DATA);
       }
+}
+
+std::vector<importer::InstalledMember> MatchImportedSet(const fs::path& root,
+    const std::vector<importer::Member>& members,const Context& context) {
+    if(members.empty())return {};
+    // lazer removes the longest directory prefix shared by every member.
+    auto prefix=members.front().name.substr(0,members.front().name.find_last_of(L'/')==std::wstring::npos?
+        0:members.front().name.find_last_of(L'/')+1);
+    while(!prefix.empty() && !std::all_of(members.begin(),members.end(),[&](const auto& m){return m.name.starts_with(prefix);})) {
+        prefix.pop_back();const auto slash=prefix.find_last_of(L'/');prefix=slash==prefix.npos?L"":prefix.substr(0,slash+1);
+    }
+    std::vector<std::wstring> names;names.reserve(members.size());
+    for(const auto& m:members)names.push_back(Filename(m.name.substr(prefix.size())));
+    auto snapshot=Snapshot(root/L"client.realm",context,MaximumDatabaseBytes);
+    try {
+        realm::Group group(realm::BinaryData(snapshot.data(),snapshot.size()),false);
+        const auto sets=group.get_table("class_BeatmapSet");
+        if(!sets)Fail(ERROR_NOT_SUPPORTED);if(sets->size()>MaximumMaps)Fail(ERROR_FILE_TOO_LARGE);
+        for(const auto& set:*sets) {
+            context.Check();if(Deleted(set))continue;
+            const auto usages=Links(set,"Files"),maps=Links(set,"Beatmaps");
+            if(usages.size()>MaximumMaps||maps.size()>MaximumMaps)Fail(ERROR_FILE_TOO_LARGE);
+            if(usages.size()<members.size())continue;
+            std::map<std::wstring,std::wstring> files;
+            std::set<std::pair<std::wstring,std::wstring>> active;
+            for(size_t i=0;i<usages.size();++i) {
+                context.Check();const auto usage=usages.get_object(i);const auto file=Link(usage,"File",true);
+                if(file)files.emplace(Filename(String(usage,"Filename",true)),String(file,"Hash",true));
+            }
+            for(size_t i=0;i<maps.size();++i) {
+                const auto map=maps.get_object(i);if(Deleted(map))continue;
+                // BeatmapInfo.File is computed from Hash, not a persisted Path.
+                active.emplace(FoldCase(String(map,"Hash",true)),FoldCase(String(map,"MD5Hash",true)));
+            }
+            std::vector<importer::InstalledMember> result;result.reserve(members.size());
+            for(size_t i=0;i<members.size();++i) {
+                const auto file=files.find(names[i]);
+                if(file==files.end()||file->second!=importer::Hex(members[i].hash))break;
+                if(members[i].beatmap) {
+                    if(!active.contains({FoldCase(file->second),FoldCase(members[i].md5)}))break;
+                }
+                result.push_back({HashPath(root/L"files",file->second),i});
+            }
+            if(result.size()==members.size()&&importer::VerifyFiles(result,members,context))return result;
+        }
+        return {};
+    }catch(const realm::Exception&){Fail(ERROR_INVALID_DATA);}
+}
+}
+
+namespace ttp_osu::importer {
+std::vector<InstalledMember> MatchLazer(const std::filesystem::path& root,
+    const std::vector<Member>& members,const library::Context& context) {
+    return library::MatchImportedSet(root,members,context);
 }
 }
